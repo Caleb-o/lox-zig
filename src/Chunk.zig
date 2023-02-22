@@ -8,6 +8,7 @@ const ValueArray = valuem.ValueArray;
 
 pub const OpCode = enum(u8) {
     constant,
+    // constant_long, TODO
     @"return",
 };
 
@@ -35,12 +36,12 @@ pub inline fn deinit(self: *Chunk) void {
     self.line_info.deinit();
 }
 
-pub inline fn writeByte(self: *Chunk, opcode: u8, line: u32) !void {
+pub fn writeByte(self: *Chunk, opcode: u8, line: u32) !void {
     try self.code.append(opcode);
     try self.addOrIncLineNumber(line);
 }
 
-pub inline fn write(self: *Chunk, opcode: OpCode, line: u32) !void {
+pub fn write(self: *Chunk, opcode: OpCode, line: u32) !void {
     try self.code.append(@enumToInt(opcode));
     try self.addOrIncLineNumber(line);
 }
