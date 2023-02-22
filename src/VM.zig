@@ -32,10 +32,9 @@ pub fn deinit(self: *VM) void {
     self.stack.deinit();
 }
 
-pub fn setup(self: *VM, chunk: *Chunk) InterpretResult {
-    self.chunk = chunk;
-    self.ip = 0;
-    return self.run();
+pub fn setup(self: *VM, source: []u8) InterpretResult {
+    compile(source);
+    return InterpretResult.ok;
 }
 
 fn resetStack(self: *VM) void {
