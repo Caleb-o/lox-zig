@@ -8,7 +8,12 @@ const ValueArray = valuem.ValueArray;
 
 pub const OpCode = enum(u8) {
     constant,
+    add,
+    subtract,
+    multiply,
+    divide,
     // constant_long, TODO
+    negate,
     @"return",
 };
 

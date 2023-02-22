@@ -28,6 +28,11 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
     const code = @intToEnum(OpCode, chunk.code.items[offset]);
     switch (code) {
         OpCode.constant => return constantInstruction("OP_CONSTANT", chunk, offset),
+        OpCode.add => return simpleInstruction("OP_ADD", offset),
+        OpCode.subtract => return simpleInstruction("OP_SUBTRACT", offset),
+        OpCode.multiply => return simpleInstruction("OP_MULTIPLY", offset),
+        OpCode.divide => return simpleInstruction("OP_DIVIDE", offset),
+        OpCode.negate => return simpleInstruction("OP_NEGATE", offset),
         OpCode.@"return" => return simpleInstruction("OP_RETURN", offset),
     }
 }
