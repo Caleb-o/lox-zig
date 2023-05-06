@@ -7,14 +7,14 @@ const Value = valuem.Value;
 const ValueArray = valuem.ValueArray;
 
 pub const OpCode = enum(u8) {
-    constant,
-    add,
-    subtract,
-    multiply,
-    divide,
+    Constant,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
     // constant_long, TODO
-    negate,
-    @"return",
+    Negate,
+    Return,
 };
 
 // Fields

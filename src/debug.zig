@@ -5,6 +5,9 @@ const chunkm = @import("Chunk.zig");
 const OpCode = chunkm.OpCode;
 const value = @import("value.zig");
 
+pub const PRINT_CODE = true;
+pub const TRACE_EXECUTION = false;
+
 pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
     print("=== {s} ===\n", .{name});
 
@@ -27,13 +30,13 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
 
     const code = @intToEnum(OpCode, chunk.code.items[offset]);
     switch (code) {
-        OpCode.constant => return constantInstruction("OP_CONSTANT", chunk, offset),
-        OpCode.add => return simpleInstruction("OP_ADD", offset),
-        OpCode.subtract => return simpleInstruction("OP_SUBTRACT", offset),
-        OpCode.multiply => return simpleInstruction("OP_MULTIPLY", offset),
-        OpCode.divide => return simpleInstruction("OP_DIVIDE", offset),
-        OpCode.negate => return simpleInstruction("OP_NEGATE", offset),
-        OpCode.@"return" => return simpleInstruction("OP_RETURN", offset),
+        .Constant => return constantInstruction("OP_CONSTANT", chunk, offset),
+        .Add => return simpleInstruction("OP_ADD", offset),
+        .Subtract => return simpleInstruction("OP_SUBTRACT", offset),
+        .Multiply => return simpleInstruction("OP_MULTIPLY", offset),
+        .Divide => return simpleInstruction("OP_DIVIDE", offset),
+        .Negate => return simpleInstruction("OP_NEGATE", offset),
+        .Return => return simpleInstruction("OP_RETURN", offset),
     }
 }
 

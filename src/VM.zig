@@ -16,6 +16,7 @@ pub const InterpretResult = enum(u8) {
 };
 
 // Fields
+allocator: Allocator,
 chunk: ?*Chunk,
 ip: usize,
 stack: ArrayList(Value),
@@ -24,6 +25,7 @@ stack: ArrayList(Value),
 
 pub fn init(allocator: Allocator) !VM {
     return .{
+        .allocator = allocator,
         .chunk = null,
         .ip = 0,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
@@ -35,10 +37,18 @@ pub fn deinit(self: *VM) void {
 }
 
 pub fn setup(self: *VM, source: []const u8) InterpretResult {
-    _ = self;
-    var compiler = Compiler{};
-    compiler.compile(source);
-    return InterpretResult.ok;
+    var chunk = Chunk.init(self.allocator);
+    defer chunk.deinit();
+
+    var compiler = Compiler.create();
+    if (!compiler.compile(&chunk, source)) {
+        return .compilerError;
+    }
+
+    self.chunk = &chunk;
+    self.ip = 0;
+
+    return self.run();
 }
 
 fn resetStack(self: *VM) void {
@@ -57,20 +67,20 @@ fn run(self: *VM) InterpretResult {
     while (true) {
         const instruction = self.readByte();
         switch (@intToEnum(OpCode, instruction)) {
-            OpCode.@"return" => {
+            OpCode.Return => {
                 var c = self.pop();
                 c.print();
                 print("\n", .{});
                 return InterpretResult.ok;
             },
-            OpCode.constant => {
+            .Constant => {
                 self.push(self.readConstant());
             },
-            OpCode.add => self.binaryOp('+'),
-            OpCode.subtract => self.binaryOp('-'),
-            OpCode.multiply => self.binaryOp('*'),
-            OpCode.divide => self.binaryOp('/'),
-            OpCode.negate => {
+            .Add => self.binaryOp('+'),
+            .Subtract => self.binaryOp('-'),
+            .Multiply => self.binaryOp('*'),
+            .Divide => self.binaryOp('/'),
+            .Negate => {
                 var v = self.pop();
                 switch (v) {
                     .double => |n| self.push(Value{ .double = -n }),

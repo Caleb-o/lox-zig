@@ -7,6 +7,12 @@ pub const Value = union(enum) {
 
     const Self = @This();
 
+    pub fn fromF32(value: f32) Self {
+        return .{
+            .double = value,
+        };
+    }
+
     pub fn print(self: *Self) void {
         switch (self.*) {
             .double => |v| std.debug.print("{d:.6}", .{v}),
