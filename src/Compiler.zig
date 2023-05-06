@@ -151,6 +151,22 @@ fn binary(self: *Self) void {
         .Minus => self.emitByte(.Subtract),
         .Star => self.emitByte(.Multiply),
         .Slash => self.emitByte(.Divide),
+
+        .BangEqual => self.emitByte(.Not),
+        .EqualEqual => self.emitByte(.Equal),
+        .Greater => self.emitByte(.Greater),
+        .GreaterEqual => self.emitBytes(.Greater, .Not),
+        .Less => self.emitByte(.Less),
+        .LessEqual => self.emitBytes(.Less, .Not),
+        else => unreachable,
+    }
+}
+
+fn literal(self: *Self) void {
+    switch (self.parser.previous.?.kind) {
+        .False => self.emitByte(.False),
+        .True => self.emitByte(.True),
+        .Nil => self.emitByte(.Nil),
         else => unreachable,
     }
 }
@@ -174,6 +190,7 @@ fn unary(self: *Self) void {
     self.parsePrecendence(.Unary);
 
     switch (operatorKind) {
+        .Bang => self.emitByte(.Not),
         .Minus => self.emitByte(.Negate),
         else => unreachable,
     }
@@ -192,7 +209,9 @@ fn parsePrecendence(self: *Self, precedence: Precedence) void {
 fn prefix(self: *Self, kind: TokenKind) void {
     switch (kind) {
         .LeftParen => self.groupedExpression(),
-        .Minus => self.unary(),
+        .Bang, .Minus => self.unary(),
+
+        .Nil, .True, .False => self.literal(),
 
         // .String => self.string(),
         .Number => self.number(),
@@ -206,7 +225,8 @@ fn infix(self: *Self, kind: TokenKind) void {
     switch (kind) {
         .Plus, .Minus, .Star, .Slash => self.binary(),
 
-        .BangEqual, .EqualEqual, .Greater, .GreaterEqual => self.binary(),
+        .BangEqual, .EqualEqual => self.binary(),
+        .Greater, .GreaterEqual => self.binary(),
         .Less, .LessEqual => self.binary(),
         // Should error instead
         else => unreachable,

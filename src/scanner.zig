@@ -219,7 +219,7 @@ pub const Scanner = struct {
 
     fn identifier(self: *Self) Token {
         while (isAlpha(self.peek()) or isDigit(self.peek())) : (_ = self.advance()) {}
-        return self.makeToken(.Identifier);
+        return self.makeToken(self.identifierType());
     }
 
     fn identifierType(self: *Self) TokenKind {
@@ -254,8 +254,8 @@ pub const Scanner = struct {
         };
     }
 
-    fn checkKeyword(self: *Self, start: i32, rest: []const u8, kind: TokenKind) TokenKind {
-        if (!self.current != start + rest.len) return .Identifier;
+    fn checkKeyword(self: *Self, start: usize, rest: []const u8, kind: TokenKind) TokenKind {
+        if (self.current != start + rest.len) return .Identifier;
 
         if (mem.eql(u8, self.start[start..self.current], rest)) {
             return kind;

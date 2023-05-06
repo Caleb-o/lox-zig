@@ -5,7 +5,7 @@ const chunkm = @import("Chunk.zig");
 const OpCode = chunkm.OpCode;
 const value = @import("value.zig");
 
-pub const PRINT_CODE = true;
+pub const PRINT_CODE = false;
 pub const TRACE_EXECUTION = false;
 
 pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
@@ -29,15 +29,27 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
     }
 
     const code = @intToEnum(OpCode, chunk.code.items[offset]);
-    switch (code) {
-        .Constant => return constantInstruction("OP_CONSTANT", chunk, offset),
-        .Add => return simpleInstruction("OP_ADD", offset),
-        .Subtract => return simpleInstruction("OP_SUBTRACT", offset),
-        .Multiply => return simpleInstruction("OP_MULTIPLY", offset),
-        .Divide => return simpleInstruction("OP_DIVIDE", offset),
-        .Negate => return simpleInstruction("OP_NEGATE", offset),
-        .Return => return simpleInstruction("OP_RETURN", offset),
-    }
+    return switch (code) {
+        .Constant => constantInstruction("OP_CONSTANT", chunk, offset),
+
+        .True => simpleInstruction("OP_TRUE", offset),
+        .False => simpleInstruction("OP_FALSE", offset),
+        .Nil => simpleInstruction("OP_NIL", offset),
+
+        .Add => simpleInstruction("OP_ADD", offset),
+        .Subtract => simpleInstruction("OP_SUBTRACT", offset),
+        .Multiply => simpleInstruction("OP_MULTIPLY", offset),
+        .Divide => simpleInstruction("OP_DIVIDE", offset),
+
+        .Greater => simpleInstruction("OP_GREATER", offset),
+        .Less => simpleInstruction("OP_LESS", offset),
+
+        .Not => simpleInstruction("OP_NOT", offset),
+        .Negate => simpleInstruction("OP_NEGATE", offset),
+        .Return => simpleInstruction("OP_RETURN", offset),
+
+        else => unreachable,
+    };
 }
 
 fn constantInstruction(name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {

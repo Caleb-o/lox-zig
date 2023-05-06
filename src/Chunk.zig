@@ -8,12 +8,23 @@ const ValueArray = valuem.ValueArray;
 
 pub const OpCode = enum(u8) {
     Constant,
+    ConstantShort,
+
+    Equal,
+    Greater,
+    Less,
+
     Add,
     Subtract,
     Multiply,
     Divide,
-    // constant_long, TODO
+    Not,
     Negate,
+
+    Nil,
+    True,
+    False,
+
     Return,
 };
 
@@ -60,14 +71,14 @@ pub inline fn addConstant(self: *Chunk, value: Value) !u8 {
     return @intCast(u8, self.constant_pool.values.items.len - 1);
 }
 
-pub fn findOpcodeLine(self: *Chunk, offset: u32) u32 {
-    var sum: u32 = 0;
+pub fn findOpcodeLine(self: *Chunk, offset: usize) usize {
+    var sum: usize = 0;
 
     for (self.line_info.items, 0..) |linec, line| {
         sum += linec;
 
         if (offset < sum) {
-            return @intCast(u32, line + 1);
+            return line + 1;
         }
     }
 

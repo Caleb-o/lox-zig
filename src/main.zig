@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const Chunk = @import("Chunk.zig").Chunk;
 const OpCode = @import("Chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
-const VM = @import("VM.zig").VM;
+const VM = @import("VM.zig");
 
 pub fn main() !void {
     var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
@@ -53,7 +53,7 @@ fn repl() !void {
         if (input.len == 0) {
             return;
         }
-        _ = vm.setup(input);
+        _ = vm.setup_and_go(input);
     }
 }
 
@@ -76,5 +76,5 @@ fn runFile(allocator: Allocator, path: [:0]u8) !void {
     defer vm.deinit();
     defer allocator.destroy(source);
 
-    _ = vm.setup(source);
+    _ = vm.setup_and_go(source);
 }
