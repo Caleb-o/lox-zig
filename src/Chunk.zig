@@ -63,7 +63,7 @@ pub inline fn addConstant(self: *Chunk, value: Value) !u8 {
 pub fn findOpcodeLine(self: *Chunk, offset: u32) u32 {
     var sum: u32 = 0;
 
-    for (self.line_info.items) |linec, line| {
+    for (self.line_info.items, 0..) |linec, line| {
         sum += linec;
 
         if (offset < sum) {

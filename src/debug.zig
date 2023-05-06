@@ -3,7 +3,7 @@ const print = std.debug.print;
 
 const chunkm = @import("Chunk.zig");
 const OpCode = chunkm.OpCode;
-const valuem = @import("value.zig");
+const value = @import("value.zig");
 
 pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
     print("=== {s} ===\n", .{name});

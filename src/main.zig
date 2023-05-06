@@ -11,6 +11,7 @@ pub fn main() !void {
     var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     const gpa = general_purpose_allocator.allocator();
     const args = try std.process.argsAlloc(gpa);
+    defer _ = general_purpose_allocator.deinit();
     defer std.process.argsFree(gpa, args);
 
     if (args.len == 1) {
@@ -44,7 +45,7 @@ fn repl() !void {
 
     while (true) {
         try stdout.writeAll(
-            \\ >
+            \\>
         );
 
         var buffer: [1024]u8 = undefined;
@@ -52,18 +53,18 @@ fn repl() !void {
         if (input.len == 0) {
             return;
         }
-        // vm.set
+        _ = vm.setup(input);
     }
 }
 
 fn readFile(allocator: Allocator, path: [:0]u8) ![]u8 {
     const file = try std.fs.cwd().openFile(
         path,
-        .{ .read = true },
+        .{},
     );
     defer file.close();
 
-    const size = try file.stat().size;
+    const size = (try file.stat()).size;
     const contents = try file.reader().readAllAlloc(allocator, size);
     return contents;
 }

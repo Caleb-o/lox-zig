@@ -4,7 +4,10 @@ const Allocator = std.mem.Allocator;
 const Chunk = @import("Chunk.zig").Chunk;
 const OpCode = @import("Chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
+const Compiler = @import("Compiler.zig");
 const print = std.debug.print;
+
+pub const VM = @This();
 
 pub const InterpretResult = enum(u8) {
     ok,
@@ -18,10 +21,9 @@ ip: usize,
 stack: ArrayList(Value),
 
 // Methods
-pub const VM = @This();
 
 pub fn init(allocator: Allocator) !VM {
-    return VM{
+    return .{
         .chunk = null,
         .ip = 0,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
@@ -32,8 +34,10 @@ pub fn deinit(self: *VM) void {
     self.stack.deinit();
 }
 
-pub fn setup(self: *VM, source: []u8) InterpretResult {
-    compile(source);
+pub fn setup(self: *VM, source: []const u8) InterpretResult {
+    _ = self;
+    var compiler = Compiler{};
+    compiler.compile(source);
     return InterpretResult.ok;
 }
 
@@ -78,7 +82,7 @@ fn run(self: *VM) InterpretResult {
 }
 
 // Helper functions
-fn binaryOp(self: *VM, op: u8) void {
+fn binaryOp(self: *VM, comptime op: u8) void {
     var rhs = self.pop();
     var lhs = self.pop();
 
@@ -87,7 +91,7 @@ fn binaryOp(self: *VM, op: u8) void {
         '-' => self.push(Value{ .double = lhs.double - rhs.double }),
         '*' => self.push(Value{ .double = lhs.double * rhs.double }),
         '/' => self.push(Value{ .double = lhs.double / rhs.double }),
-        else => {},
+        else => unreachable,
     }
 }
 
