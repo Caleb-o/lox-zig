@@ -33,6 +33,9 @@ pub const OpCode = enum(u8) {
     Negate,
     Print,
 
+    Loop,
+    Jump,
+    JumpIfFalse,
     Return,
 };
 

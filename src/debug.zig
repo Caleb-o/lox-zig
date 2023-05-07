@@ -9,7 +9,7 @@ pub const PRINT_CODE = false;
 pub const TRACE_EXECUTION = false;
 
 pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
-    print("=== {s} ===\n", .{name});
+    print("=== {s} :: {d} ===\n", .{ name, chunk.code.items.len });
 
     var offset: u32 = 0;
     while (offset < chunk.code.items.len) {
@@ -57,6 +57,11 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
         .Not => simpleInstruction("OP_NOT", offset),
         .Negate => simpleInstruction("OP_NEGATE", offset),
         .Print => simpleInstruction("OP_PRINT", offset),
+
+        .Loop => jumpInstruction("OP_LOOP", -1, chunk, offset),
+        .Jump => jumpInstruction("OP_JUMP", 1, chunk, offset),
+        .JumpIfFalse => jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
+
         .Return => simpleInstruction("OP_RETURN", offset),
 
         else => unreachable,
@@ -65,7 +70,7 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
 
 fn constantInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
     const constant = chunk.code.items[offset + 1];
-    print("{s} {d:>4} '", .{ name, constant });
+    print("{s:<16} {d:>4} '", .{ name, constant });
     chunk.constant_pool.values.items[constant].print();
     print("'\n", .{});
 
@@ -73,12 +78,22 @@ fn constantInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: 
 }
 
 fn simpleInstruction(comptime name: []const u8, offset: u32) u32 {
-    print("{s}\n", .{name});
+    print("{s:<16}\n", .{name});
     return offset + 1;
 }
 
 fn byteInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
-    const slot = chunk.code[offset + 1];
-    std.debug.print("{s} {d:4}\n", .{ name, slot });
+    const slot = chunk.code.items[offset + 1];
+    std.debug.print("{s:<16} {d:4}\n", .{ name, slot });
     return offset + 2;
+}
+
+fn jumpInstruction(comptime name: []const u8, sign: i32, chunk: *chunkm.Chunk, offset: u32) u32 {
+    const jump = (@intCast(i16, chunk.code.items[offset + 1]) << 8) | @intCast(i16, chunk.code.items[offset + 2]);
+    std.debug.print("{s:<16} {d:4} -> {d}\n", .{
+        name,
+        offset,
+        @intCast(i32, offset + 3) + sign * jump,
+    });
+    return offset + 3;
 }

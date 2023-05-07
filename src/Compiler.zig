@@ -164,10 +164,32 @@ inline fn emitByte(self: *Self, op: OpCode) void {
     self.compilingChunk.?.write(op, self.parser.previous.line) catch {};
 }
 
+inline fn emitByteU8(self: *Self, op: u8) void {
+    self.compilingChunk.?.writeByte(op, self.parser.previous.line) catch {};
+}
+
 // FIXME: Handle errors
 fn emitBytes(self: *Self, op1: OpCode, op2: OpCode) void {
     self.compilingChunk.?.write(op1, self.parser.previous.line) catch {};
     self.compilingChunk.?.write(op2, self.parser.previous.line) catch {};
+}
+
+fn emitJump(self: *Self, op: OpCode) i32 {
+    self.emitByte(op);
+    self.emitByteU8(0xff);
+    self.emitByteU8(0xff);
+    return @intCast(i32, self.compilingChunk.?.code.items.len - 2);
+}
+
+fn patchJump(self: *Self, offset: i32) void {
+    const jump = @intCast(usize, @intCast(i32, self.compilingChunk.?.code.items.len) - offset - 2);
+
+    if (jump > std.math.maxInt(u16)) {
+        self.@"error"("Too much code to jump over.");
+    }
+
+    self.compilingChunk.?.code.items[@intCast(usize, offset)] = @intCast(u8, (jump >> 8) & 0xff);
+    self.compilingChunk.?.code.items[@intCast(usize, offset) + 1] = @intCast(u8, jump & 0xff);
 }
 
 inline fn emitReturn(self: *Self) void {
@@ -334,6 +356,9 @@ fn infix(self: *Self, kind: TokenKind, canAssign: bool) void {
         .BangEqual, .EqualEqual => self.binary(),
         .Greater, .GreaterEqual => self.binary(),
         .Less, .LessEqual => self.binary(),
+
+        .And => self.@"and"(),
+        .Or => self.@"or"(),
         // Should error instead
         else => unreachable,
     }
@@ -409,6 +434,8 @@ fn identifiersEqual(a: *Token, b: *Token) bool {
 }
 
 fn resolveLocal(self: *Self, name: *Token) i32 {
+    if (self.current.count == 0) return -1;
+
     var i: usize = @intCast(usize, self.current.count) - 1;
     while (i >= 0) : (i += 1) {
         var local = self.current.locals[i];
@@ -512,6 +539,38 @@ inline fn declaration(self: *Self) void {
     if (self.parser.panicMode) self.sync();
 }
 
+fn emitLoop(self: *Self, loopStart: usize) void {
+    self.emitByte(.Loop);
+
+    const offset = self.compilingChunk.?.code.items.len - loopStart + 2;
+    if (offset > std.math.maxInt(u16)) {
+        self.@"error"("Loop body is too large to jump.");
+    }
+
+    self.emitByteU8(@intCast(u8, (offset >> 8) & 0xff));
+    self.emitByteU8(@intCast(u8, offset & 0xff));
+}
+
+fn @"and"(self: *Self) void {
+    const endJump = self.emitJump(.JumpIfFalse);
+
+    self.emitByte(.Pop);
+    self.parsePrecendence(.And);
+
+    self.patchJump(endJump);
+}
+
+fn @"or"(self: *Self) void {
+    const elseJump = self.emitJump(.JumpIfFalse);
+    const endJump = self.emitJump(.Jump);
+
+    self.patchJump(elseJump);
+    self.emitByte(.Pop);
+
+    self.parsePrecendence(.Or);
+    self.patchJump(endJump);
+}
+
 fn varDeclaration(self: *Self) void {
     const global = self.parseVariable("Expect a variable name.");
 
@@ -525,11 +584,104 @@ fn varDeclaration(self: *Self) void {
     self.defineVariable(global);
 }
 
+fn ifStatement(self: *Self) void {
+    self.consume(.LeftParen, "Expect '(' after 'if'.");
+    self.expression();
+    self.consume(.RightParen, "Expect ')' after condition.");
+
+    const thenJump = self.emitJump(.JumpIfFalse);
+    self.emitByte(.Pop);
+    self.statement();
+
+    const elseJump = self.emitJump(.Jump);
+
+    self.patchJump(thenJump);
+    self.emitByte(.Pop);
+
+    if (self.match(.Else)) {
+        self.statement();
+    }
+    self.patchJump(elseJump);
+}
+
+fn whileStatement(self: *Self) void {
+    const loopStart = self.compilingChunk.?.code.items.len;
+    self.consume(.LeftParen, "Expect '(' after 'while'.");
+    self.expression();
+    self.consume(.RightParen, "Expect ')' after condition.");
+
+    const exitJump = self.emitJump(.JumpIfFalse);
+    self.emitByte(.Pop);
+    self.statement();
+    self.emitLoop(loopStart);
+
+    self.patchJump(exitJump);
+    self.emitByte(.Pop);
+}
+
+fn forStatement(self: *Self) void {
+    self.beginScope();
+    self.consume(.LeftParen, "Expect '(' after 'for'.");
+
+    if (self.match(.Semicolon)) {
+        // No initialiser
+    } else if (self.match(.Var)) {
+        self.varDeclaration();
+    } else {
+        self.expressionStatement();
+    }
+
+    var loopStart = self.compilingChunk.?.code.items.len;
+    var exitJump: i32 = -1;
+    if (!self.match(.Semicolon)) {
+        self.expression();
+        self.consume(.Semicolon, "Expect ';' after loop condition.");
+
+        exitJump = self.emitJump(.JumpIfFalse);
+        self.emitByte(.Pop);
+    }
+
+    if (!self.match(.RightParen)) {
+        const bodyJump = self.emitJump(.Jump);
+        const incrementStart = self.compilingChunk.?.code.items.len;
+
+        self.expression();
+        self.emitByte(.Pop);
+        self.consume(.RightParen, "Expect ')' after for clauses.");
+
+        self.emitLoop(loopStart);
+        loopStart = incrementStart;
+        self.patchJump(bodyJump);
+    }
+
+    self.statement();
+    self.emitLoop(loopStart);
+
+    if (exitJump != -1) {
+        self.patchJump(exitJump);
+        self.emitByte(.Pop); // Condition
+    }
+
+    self.endScope();
+}
+
 fn statement(self: *Self) void {
     switch (self.parser.current.kind) {
         .Print => {
             self.advance();
             self.printStatement();
+        },
+        .If => {
+            self.advance();
+            self.ifStatement();
+        },
+        .While => {
+            self.advance();
+            self.whileStatement();
+        },
+        .For => {
+            self.advance();
+            self.forStatement();
         },
         .LeftBrace => {
             self.advance();

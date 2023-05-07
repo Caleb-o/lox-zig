@@ -79,11 +79,13 @@ fn readFile(allocator: Allocator, path: [:0]u8) ![]u8 {
 }
 
 fn runFile(allocator: Allocator, errAlloc: Allocator, path: [:0]u8) !void {
-    var source = try readFile(allocator, path);
-
+    const source = try readFile(allocator, path);
     var vm = try VM.init(allocator, errAlloc);
-    defer vm.deinit();
-    defer allocator.destroy(source);
+
+    defer {
+        allocator.free(source);
+        vm.deinit();
+    }
 
     _ = vm.setup_and_go(source);
 }

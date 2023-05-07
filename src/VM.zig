@@ -137,6 +137,21 @@ fn run(self: *Self) InterpretResult {
         switch (@intToEnum(OpCode, instruction)) {
             .Return => return InterpretResult.ok,
 
+            .Loop => {
+                const offset = self.readShort();
+                self.ip -= @intCast(usize, offset);
+            },
+
+            .Jump => {
+                const offset = self.readShort();
+                self.ip += @intCast(usize, offset);
+            },
+
+            .JumpIfFalse => {
+                const offset = self.readShort();
+                self.ip += @intCast(usize, @boolToInt(self.peek(0).isFalsey())) * offset;
+            },
+
             .Constant => self.push(self.readConstant()),
             .True => self.push(Value.fromBool(true)),
             .False => self.push(Value.fromBool(false)),
@@ -250,6 +265,14 @@ fn binaryOp(self: *Self, comptime op: u8) void {
 inline fn readByte(self: *Self) u8 {
     defer self.ip += 1;
     return self.chunk.?.code.items[self.ip];
+}
+
+inline fn readShort(self: *Self) u16 {
+    defer self.ip += 2;
+    const code = self.chunk.?.code;
+    // NOTE: Bitshifts on unsigned values is UB, so we must cast so a signed type
+    const left = @intCast(u8, @intCast(i16, code.items[self.ip]) << 8);
+    return @intCast(u16, (left | code.items[self.ip + 1]));
 }
 
 inline fn readConstant(self: *Self) Value {
