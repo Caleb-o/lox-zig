@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Value = @import("value.zig").Value;
 const VM = @import("VM.zig");
 
 const Self = @This();
@@ -34,15 +35,27 @@ pub fn destroy(self: *Self, vm: *VM) void {
 
 pub const ObjectString = struct {
     object: Self,
+    hash: u32,
     chars: []const u8,
 
     const String = @This();
 
     pub fn create(vm: *VM, buffer: []const u8) *String {
+        const hash = getHash(buffer);
+
+        // Find an interned string
+        if (vm.strings.findString(buffer, hash)) |str| {
+            vm.allocator.free(buffer);
+            return str;
+        }
+
         const object = Self.allocate(vm, String, .string);
         const str = object.asString();
         str.object = object.*;
         str.chars = buffer;
+        str.hash = hash;
+
+        _ = vm.strings.set(str, Value.fromBool(true));
 
         return str;
     }
@@ -56,6 +69,15 @@ pub const ObjectString = struct {
     pub fn destroy(self: *String, vm: *VM) void {
         vm.allocator.free(self.chars);
         vm.allocator.destroy(self);
+    }
+
+    fn getHash(buffer: []const u8) u32 {
+        var hash: u32 = 2166136261;
+        for (buffer) |byte| {
+            hash ^= @as(u32, byte);
+            hash *%= 16777619;
+        }
+        return hash;
     }
 };
 

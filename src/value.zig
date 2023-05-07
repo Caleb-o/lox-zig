@@ -99,7 +99,7 @@ pub const Value = union(enum) {
             },
             .object => |v| switch (other) {
                 // TMP
-                .object => |o| std.mem.eql(u8, v.asString().chars, o.asString().chars),
+                .object => |o| v == o,
                 else => false,
             },
         };

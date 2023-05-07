@@ -8,6 +8,7 @@ const Object = @import("Object.zig");
 const Compiler = @import("Compiler.zig");
 const print = std.debug.print;
 const debug = @import("debug.zig");
+const Table = @import("Table.zig");
 
 pub const Self = @This();
 
@@ -22,6 +23,7 @@ allocator: Allocator,
 chunk: ?*Chunk,
 ip: usize,
 stack: ArrayList(Value),
+strings: Table,
 objects: ?*Object,
 
 // Methods
@@ -32,12 +34,14 @@ pub fn init(allocator: Allocator) !Self {
         .chunk = null,
         .ip = 0,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
+        .strings = Table.init(allocator),
         .objects = null,
     };
 }
 
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
+    self.strings.deinit();
     self.freeObjects();
     self.objects = null;
 }
