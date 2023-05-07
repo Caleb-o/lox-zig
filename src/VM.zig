@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const Chunk = @import("Chunk.zig").Chunk;
 const OpCode = @import("Chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
+const Object = @import("Object.zig");
 const Compiler = @import("Compiler.zig");
 const print = std.debug.print;
 const debug = @import("debug.zig");
@@ -21,6 +22,7 @@ allocator: Allocator,
 chunk: ?*Chunk,
 ip: usize,
 stack: ArrayList(Value),
+objects: ?*Object,
 
 // Methods
 
@@ -30,18 +32,21 @@ pub fn init(allocator: Allocator) !Self {
         .chunk = null,
         .ip = 0,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
+        .objects = null,
     };
 }
 
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
+    self.freeObjects();
+    self.objects = null;
 }
 
 pub fn setup_and_go(self: *Self, source: []const u8) InterpretResult {
     var chunk = Chunk.init(self.allocator);
     defer chunk.deinit();
 
-    var compiler = Compiler.create();
+    var compiler = Compiler.create(self);
     if (!compiler.compile(&chunk, source)) {
         return .compilerError;
     }
@@ -74,8 +79,38 @@ inline fn pop(self: *Self) Value {
     return self.stack.pop();
 }
 
-fn isFalsey(value: Value) bool {
-    return value.isNil() or (value.isBool() and !value.asBool());
+fn concatenate(self: *Self, lhs: *Object, rhs: *Object) void {
+    switch (lhs.kind) {
+        .string => switch (rhs.kind) {
+            .string => {
+                // Make visible to GC
+                self.push(Value.fromObject(lhs));
+                self.push(Value.fromObject(rhs));
+
+                const lstr = lhs.asString();
+                const rstr = rhs.asString();
+                // TODO: Handle errors
+                const buffer = self.allocator.alloc(u8, lstr.chars.len + rstr.chars.len) catch unreachable;
+
+                std.mem.copy(u8, buffer[0..lstr.chars.len], lstr.chars);
+                std.mem.copy(u8, buffer[lstr.chars.len..], rstr.chars);
+
+                _ = self.pop();
+                _ = self.pop();
+
+                self.push(Value.fromObject(&Object.ObjectString.create(self, buffer).object));
+            },
+        },
+    }
+}
+
+fn freeObjects(self: *Self) void {
+    var object = self.objects;
+    while (object) |o| {
+        const next = o.next;
+        o.destroy(self);
+        object = next;
+    }
 }
 
 fn run(self: *Self) InterpretResult {
@@ -98,7 +133,17 @@ fn run(self: *Self) InterpretResult {
             },
             .Nil => self.push(Value.fromNil()),
 
-            .Add => self.binaryOp('+'),
+            .Add => {
+                const rhs = self.pop();
+                const lhs = self.pop();
+
+                if (lhs.isObject() and rhs.isObject()) {
+                    self.concatenate(lhs.asObject(), rhs.asObject());
+                } else if (lhs.isNumber() and rhs.isNumber()) {} else {
+                    self.runtimeError("Operands must be two numbers or two strings.");
+                    return .runtimeError;
+                }
+            },
             .Subtract => self.binaryOp('-'),
             .Multiply => self.binaryOp('*'),
             .Divide => self.binaryOp('/'),
@@ -106,7 +151,7 @@ fn run(self: *Self) InterpretResult {
             .Greater => self.binaryOp('>'),
             .Less => self.binaryOp('<'),
 
-            .Not => self.push(Value.fromBool(isFalsey(self.pop()))),
+            .Not => self.push(Value.fromBool(self.pop().isFalsey())),
             .Negate => {
                 if (!self.peek(0).isNumber()) {
                     self.runtimeError("Operand must be a number.");
@@ -151,13 +196,39 @@ inline fn readConstant(self: *Self) Value {
     return self.chunk.?.constant_pool.values.items[self.readByte()];
 }
 
-test "Simple expression" {
+test "Simple Expression" {
     if (debug.PRINT_CODE or debug.TRACE_EXECUTION) {
         return error.SkipZigTest;
     }
 
     const source = "-100 + 200 * 2";
-    var vm = try Self.init(std.heap.page_allocator);
+    var vm = try Self.init(std.testing.allocator);
+    defer vm.deinit();
+    std.debug.assert(vm.setup_and_go(source) == InterpretResult.ok);
+}
+
+test "String Equality" {
+    if (debug.PRINT_CODE or debug.TRACE_EXECUTION) {
+        return error.SkipZigTest;
+    }
+
+    const source =
+        \\"Hello" == "Hello"
+    ;
+    var vm = try Self.init(std.testing.allocator);
+    defer vm.deinit();
+    std.debug.assert(vm.setup_and_go(source) == InterpretResult.ok);
+}
+
+test "String Concatenation" {
+    if (debug.PRINT_CODE or debug.TRACE_EXECUTION) {
+        return error.SkipZigTest;
+    }
+
+    const source =
+        \\"Hello, " + "World!"
+    ;
+    var vm = try Self.init(std.testing.allocator);
     defer vm.deinit();
     std.debug.assert(vm.setup_and_go(source) == InterpretResult.ok);
 }

@@ -1,11 +1,13 @@
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
+const Object = @import("Object.zig");
 
 pub const Value = union(enum) {
     nil: void,
     number: f32,
     boolean: bool,
+    object: *Object,
 
     const Self = @This();
 
@@ -27,6 +29,12 @@ pub const Value = union(enum) {
         };
     }
 
+    pub inline fn fromObject(value: *Object) Self {
+        return .{
+            .object = value,
+        };
+    }
+
     // Check
     pub fn isNil(self: Self) bool {
         return self == .nil;
@@ -38,6 +46,10 @@ pub const Value = union(enum) {
 
     pub fn isBool(self: Self) bool {
         return self == .boolean;
+    }
+
+    pub fn isObject(self: Self) bool {
+        return self == .object;
     }
 
     // "Cast"
@@ -56,7 +68,21 @@ pub const Value = union(enum) {
         return self.boolean;
     }
 
+    pub fn asObject(self: Self) *Object {
+        std.debug.assert(self.isObject());
+        return self.object;
+    }
+
     // Utility
+    pub fn isFalsey(self: Self) bool {
+        return switch (self) {
+            .nil => true,
+            .boolean => |v| !v,
+            .number => false,
+            .object => false,
+        };
+    }
+
     pub fn equals(self: Self, other: Self) bool {
         return switch (self) {
             .nil => switch (other) {
@@ -71,6 +97,11 @@ pub const Value = union(enum) {
                 .boolean => |o| v == o,
                 else => false,
             },
+            .object => |v| switch (other) {
+                // TMP
+                .object => |o| std.mem.eql(u8, v.asString().chars, o.asString().chars),
+                else => false,
+            },
         };
     }
 
@@ -79,6 +110,13 @@ pub const Value = union(enum) {
             .nil => std.debug.print("nil", .{}),
             .number => |v| std.debug.print("{d:.6}", .{v}),
             .boolean => |v| std.debug.print("{any}", .{v}),
+            .object => |v| printObject(v),
+        }
+    }
+
+    pub fn printObject(object: *Object) void {
+        switch (object.kind) {
+            .string => std.debug.print("{s}", .{object.asString().chars}),
         }
     }
 };

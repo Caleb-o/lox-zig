@@ -43,6 +43,7 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
 
         .Greater => simpleInstruction("OP_GREATER", offset),
         .Less => simpleInstruction("OP_LESS", offset),
+        .Equal => simpleInstruction("OP_EQUAL", offset),
 
         .Not => simpleInstruction("OP_NOT", offset),
         .Negate => simpleInstruction("OP_NEGATE", offset),

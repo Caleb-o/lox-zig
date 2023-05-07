@@ -8,16 +8,19 @@ const Value = @import("value.zig").Value;
 const VM = @import("VM.zig");
 
 pub fn main() !void {
-    var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-    const gpa = general_purpose_allocator.allocator();
-    const args = try std.process.argsAlloc(gpa);
-    defer _ = general_purpose_allocator.deinit();
-    defer std.process.argsFree(gpa, args);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    const args = try std.process.argsAlloc(allocator);
+    defer {
+        const status = gpa.deinit();
+        if (status == .leak) std.debug.panic("Internal Error: Memory leaked\n", .{});
+    }
+    defer std.process.argsFree(allocator, args);
 
     if (args.len == 1) {
-        try repl();
+        try repl(allocator);
     } else if (args.len == 2) {
-        try runFile(gpa, args[1]);
+        try runFile(allocator, args[1]);
     } else {
         std.debug.print("Usage: clox [path]\n", .{});
     }
@@ -36,11 +39,11 @@ fn nextLine(reader: anytype, buffer: []u8) !?[]const u8 {
     }
 }
 
-fn repl() !void {
+fn repl(allocator: Allocator) !void {
     const stdout = std.io.getStdOut();
     const stdin = std.io.getStdIn();
 
-    var vm = try VM.init(page_allocator);
+    var vm = try VM.init(allocator);
     defer vm.deinit();
 
     while (true) {

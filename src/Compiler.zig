@@ -4,10 +4,12 @@ const Allocator = std.mem.Allocator;
 const Chunk = @import("Chunk.zig").Chunk;
 const OpCode = @import("Chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
+const Object = @import("Object.zig");
 const Token = @import("scanner.zig").Token;
 const TokenKind = @import("scanner.zig").TokenKind;
 const Scanner = @import("scanner.zig").Scanner;
 const debug = @import("debug.zig");
+const VM = @import("VM.zig");
 
 pub const CompilerError = enum {
     IncorrectToken,
@@ -53,12 +55,14 @@ pub const Self = @This();
 compilingChunk: ?*Chunk,
 scanner: ?Scanner,
 parser: Parser,
+vm: *VM,
 
-pub fn create() Self {
+pub fn create(vm: *VM) Self {
     return .{
         .compilingChunk = null,
         .scanner = null,
         .parser = Parser.create(),
+        .vm = vm,
     };
 }
 
@@ -176,6 +180,17 @@ fn groupedExpression(self: *Self) void {
     self.consume(.RightParen, "Expect ')' after expression.");
 }
 
+fn stringValue(self: *Self) Value {
+    const source = self.parser.previous.?.lexeme[1 .. self.parser.previous.?.lexeme.len - 1];
+    return Value.fromObject(
+        &Object.ObjectString.copy(self.vm, source).object,
+    );
+}
+
+inline fn string(self: *Self) void {
+    self.emitConstant(self.stringValue());
+}
+
 fn number(self: *Self) void {
     // TODO: Handle error properly
     const float = (std.fmt.parseFloat(f32, self.parser.previous.?.lexeme) catch {
@@ -213,7 +228,7 @@ fn prefix(self: *Self, kind: TokenKind) void {
 
         .Nil, .True, .False => self.literal(),
 
-        // .String => self.string(),
+        .String => self.string(),
         .Number => self.number(),
 
         // Should error instead
