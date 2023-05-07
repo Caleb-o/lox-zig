@@ -11,16 +11,22 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     const args = try std.process.argsAlloc(allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const errAlloc = arena.allocator();
+
     defer {
+        arena.deinit();
+
         const status = gpa.deinit();
         if (status == .leak) std.debug.panic("Internal Error: Memory leaked\n", .{});
     }
     defer std.process.argsFree(allocator, args);
 
     if (args.len == 1) {
-        try repl(allocator);
+        try repl(allocator, errAlloc);
     } else if (args.len == 2) {
-        try runFile(allocator, args[1]);
+        try runFile(allocator, errAlloc, args[1]);
     } else {
         std.debug.print("Usage: clox [path]\n", .{});
     }
@@ -39,11 +45,11 @@ fn nextLine(reader: anytype, buffer: []u8) !?[]const u8 {
     }
 }
 
-fn repl(allocator: Allocator) !void {
+fn repl(allocator: Allocator, errAlloc: Allocator) !void {
     const stdout = std.io.getStdOut();
     const stdin = std.io.getStdIn();
 
-    var vm = try VM.init(allocator);
+    var vm = try VM.init(allocator, errAlloc);
     defer vm.deinit();
 
     while (true) {
@@ -72,10 +78,10 @@ fn readFile(allocator: Allocator, path: [:0]u8) ![]u8 {
     return contents;
 }
 
-fn runFile(allocator: Allocator, path: [:0]u8) !void {
+fn runFile(allocator: Allocator, errAlloc: Allocator, path: [:0]u8) !void {
     var source = try readFile(allocator, path);
 
-    var vm = try VM.init(page_allocator);
+    var vm = try VM.init(allocator, errAlloc);
     defer vm.deinit();
     defer allocator.destroy(source);
 

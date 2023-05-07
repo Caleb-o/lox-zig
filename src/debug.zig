@@ -5,7 +5,7 @@ const chunkm = @import("Chunk.zig");
 const OpCode = chunkm.OpCode;
 const value = @import("value.zig");
 
-pub const PRINT_CODE = true;
+pub const PRINT_CODE = false;
 pub const TRACE_EXECUTION = false;
 
 pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
@@ -36,6 +36,15 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
         .False => simpleInstruction("OP_FALSE", offset),
         .Nil => simpleInstruction("OP_NIL", offset),
 
+        .Pop => simpleInstruction("OP_POP", offset),
+
+        .GetLocal => byteInstruction("OP_GET_LOCAL", chunk, offset),
+        .SetLocal => byteInstruction("OP_SET_LOCAL", chunk, offset),
+
+        .GetGlobal => constantInstruction("OP_GET_GLOBAL", chunk, offset),
+        .DefineGlobal => constantInstruction("OP_DEFINE_GLOBAL", chunk, offset),
+        .SetGlobal => constantInstruction("OP_SET_GLOBAL", chunk, offset),
+
         .Add => simpleInstruction("OP_ADD", offset),
         .Subtract => simpleInstruction("OP_SUBTRACT", offset),
         .Multiply => simpleInstruction("OP_MULTIPLY", offset),
@@ -54,7 +63,7 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
     };
 }
 
-fn constantInstruction(name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
+fn constantInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
     const constant = chunk.code.items[offset + 1];
     print("{s} {d:>4} '", .{ name, constant });
     chunk.constant_pool.values.items[constant].print();
@@ -63,7 +72,13 @@ fn constantInstruction(name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 
     return offset + 2;
 }
 
-fn simpleInstruction(name: []const u8, offset: u32) u32 {
+fn simpleInstruction(comptime name: []const u8, offset: u32) u32 {
     print("{s}\n", .{name});
     return offset + 1;
+}
+
+fn byteInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
+    const slot = chunk.code[offset + 1];
+    std.debug.print("{s} {d:4}\n", .{ name, slot });
+    return offset + 2;
 }

@@ -10,6 +10,8 @@ const print = std.debug.print;
 const debug = @import("debug.zig");
 const Table = @import("Table.zig");
 
+const expect = std.testing.expect;
+
 pub const Self = @This();
 
 pub const InterpretResult = enum(u8) {
@@ -20,20 +22,24 @@ pub const InterpretResult = enum(u8) {
 
 // Fields
 allocator: Allocator,
+errAlloc: Allocator,
 chunk: ?*Chunk,
 ip: usize,
 stack: ArrayList(Value),
+globals: Table,
 strings: Table,
 objects: ?*Object,
 
 // Methods
 
-pub fn init(allocator: Allocator) !Self {
+pub fn init(allocator: Allocator, errAlloc: Allocator) !Self {
     return .{
         .allocator = allocator,
+        .errAlloc = errAlloc,
         .chunk = null,
         .ip = 0,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
+        .globals = Table.init(allocator),
         .strings = Table.init(allocator),
         .objects = null,
     };
@@ -41,6 +47,7 @@ pub fn init(allocator: Allocator) !Self {
 
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
+    self.globals.deinit();
     self.strings.deinit();
     self.freeObjects();
     self.objects = null;
@@ -67,6 +74,13 @@ inline fn resetStack(self: *Self) void {
 
 fn runtimeError(self: *Self, msg: []const u8) void {
     const line = self.chunk.?.findOpcodeLine(self.ip);
+    std.debug.print("Error: {s} [line {d}]\n", .{ msg, line });
+}
+
+fn runtimeErrorAlloc(self: *Self, comptime fmt: []const u8, args: anytype) void {
+    const line = self.chunk.?.findOpcodeLine(self.ip);
+    // TODO: Handle Errors
+    const msg = std.fmt.allocPrint(self.errAlloc, fmt, args) catch unreachable;
     std.debug.print("Error: {s} [line {d}]\n", .{ msg, line });
 }
 
@@ -132,6 +146,44 @@ fn run(self: *Self) InterpretResult {
                 self.push(Value.fromBool(a.equals(b)));
             },
             .Nil => self.push(Value.fromNil()),
+
+            .Pop => _ = self.pop(),
+
+            .GetLocal => {
+                const slot = self.readByte();
+                self.push(self.stack.items[slot]);
+            },
+
+            .SetLocal => {
+                const slot = self.readByte();
+                self.stack.items[slot] = self.peek(0);
+            },
+
+            .GetGlobal => {
+                const name = self.readString();
+                if (self.globals.get(name)) |value| {
+                    self.push(value);
+                    continue;
+                }
+
+                self.runtimeErrorAlloc("Undefined variable '{s}'.", .{name.chars});
+                return .runtimeError;
+            },
+
+            .DefineGlobal => {
+                const name = self.readString();
+                _ = self.globals.set(name, self.peek(0));
+                _ = self.pop();
+            },
+
+            .SetGlobal => {
+                const name = self.readString();
+                if (self.globals.set(name, self.peek(0))) {
+                    _ = self.globals.delete(name);
+                    self.runtimeErrorAlloc("Undefined variable '{s}.", .{name.chars});
+                    return .runtimeError;
+                }
+            },
 
             .Add => {
                 const rhs = self.pop();
@@ -204,15 +256,24 @@ inline fn readConstant(self: *Self) Value {
     return self.chunk.?.constant_pool.values.items[self.readByte()];
 }
 
+inline fn readString(self: *Self) *Object.ObjectString {
+    return self.readConstant().asObject().asString();
+}
+
 test "Simple Expression" {
     if (debug.PRINT_CODE or debug.TRACE_EXECUTION) {
         return error.SkipZigTest;
     }
 
-    const source = "-100 + 200 * 2";
-    var vm = try Self.init(std.testing.allocator);
-    defer vm.deinit();
-    std.debug.assert(vm.setup_and_go(source) == InterpretResult.ok);
+    const source = "-100 + 200 * 2;";
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const errAlloc = arena.allocator();
+    var vm = try Self.init(std.testing.allocator, errAlloc);
+    defer {
+        arena.deinit();
+        vm.deinit();
+    }
+    try expect(vm.setup_and_go(source) == InterpretResult.ok);
 }
 
 test "String Equality" {
@@ -221,11 +282,16 @@ test "String Equality" {
     }
 
     const source =
-        \\"Hello" == "Hello"
+        \\"Hello" == "Hello";
     ;
-    var vm = try Self.init(std.testing.allocator);
-    defer vm.deinit();
-    std.debug.assert(vm.setup_and_go(source) == InterpretResult.ok);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const errAlloc = arena.allocator();
+    var vm = try Self.init(std.testing.allocator, errAlloc);
+    defer {
+        arena.deinit();
+        vm.deinit();
+    }
+    try expect(vm.setup_and_go(source) == InterpretResult.ok);
 }
 
 test "String Concatenation" {
@@ -234,9 +300,52 @@ test "String Concatenation" {
     }
 
     const source =
-        \\"Hello, " + "World!"
+        \\"Hello, " + "World!";
     ;
-    var vm = try Self.init(std.testing.allocator);
-    defer vm.deinit();
-    std.debug.assert(vm.setup_and_go(source) == InterpretResult.ok);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const errAlloc = arena.allocator();
+    var vm = try Self.init(std.testing.allocator, errAlloc);
+    defer {
+        arena.deinit();
+        vm.deinit();
+    }
+    try expect(vm.setup_and_go(source) == InterpretResult.ok);
+}
+
+test "Global variables" {
+    if (debug.PRINT_CODE or debug.TRACE_EXECUTION) {
+        return error.SkipZigTest;
+    }
+
+    const source =
+        \\var foo = "Hello!";
+        \\print foo;
+    ;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const errAlloc = arena.allocator();
+    var vm = try Self.init(std.testing.allocator, errAlloc);
+    defer {
+        arena.deinit();
+        vm.deinit();
+    }
+    try expect(vm.setup_and_go(source) == InterpretResult.ok);
+}
+
+test "Invalid assignment target" {
+    if (debug.PRINT_CODE or debug.TRACE_EXECUTION) {
+        return error.SkipZigTest;
+    }
+
+    const source =
+        \\var a = 1; var b = 1; var c = 1; var d = 1;
+        \\a * b = c + d;
+    ;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const errAlloc = arena.allocator();
+    var vm = try Self.init(std.testing.allocator, errAlloc);
+    defer {
+        arena.deinit();
+        vm.deinit();
+    }
+    try expect(vm.setup_and_go(source) == InterpretResult.compilerError);
 }

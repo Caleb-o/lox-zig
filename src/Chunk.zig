@@ -10,6 +10,17 @@ pub const OpCode = enum(u8) {
     Constant,
     ConstantShort,
 
+    Nil,
+    True,
+    False,
+
+    GetLocal,
+    SetLocal,
+    GetGlobal,
+    DefineGlobal,
+    SetGlobal,
+
+    Pop,
     Equal,
     Greater,
     Less,
@@ -21,10 +32,6 @@ pub const OpCode = enum(u8) {
     Not,
     Negate,
     Print,
-
-    Nil,
-    True,
-    False,
 
     Return,
 };

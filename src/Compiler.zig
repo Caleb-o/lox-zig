@@ -16,17 +16,43 @@ pub const CompilerError = enum {
 };
 
 const Parser = struct {
-    current: ?Token,
-    previous: ?Token,
+    current: Token,
+    previous: Token,
     hadError: bool,
     panicMode: bool,
 
     pub fn create() Parser {
         return .{
-            .current = null,
-            .previous = null,
+            .current = undefined,
+            .previous = undefined,
             .hadError = false,
             .panicMode = false,
+        };
+    }
+};
+
+const Local = struct {
+    name: Token,
+    depth: i32,
+
+    pub fn create() Local {
+        return .{
+            .name = undefined,
+            .depth = 0,
+        };
+    }
+};
+
+pub const Compiler = struct {
+    locals: [std.math.maxInt(u8) + 1]Local,
+    count: i32,
+    scopeDepth: i32,
+
+    pub fn create() Compiler {
+        return .{
+            .locals = [_]Local{Local.create()} ** (std.math.maxInt(u8) + 1),
+            .count = 0,
+            .scopeDepth = 0,
         };
     }
 };
@@ -53,14 +79,16 @@ pub const Self = @This();
 
 // Fields
 compilingChunk: ?*Chunk,
-scanner: ?Scanner,
+current: *Compiler,
+scanner: Scanner,
 parser: Parser,
 vm: *VM,
 
 pub fn create(vm: *VM) Self {
     return .{
         .compilingChunk = null,
-        .scanner = null,
+        .scanner = undefined,
+        .current = undefined,
         .parser = Parser.create(),
         .vm = vm,
     };
@@ -72,6 +100,9 @@ pub fn compile(self: *Self, chunk: *Chunk, source: []const u8) bool {
 
     self.compilingChunk = chunk;
     self.scanner = Scanner.init(source);
+
+    var compiler = Compiler.create();
+    self.setCompiler(&compiler);
 
     self.advance();
 
@@ -116,7 +147,7 @@ inline fn currentChunk(self: *Self) *Chunk {
 }
 
 fn consume(self: *Self, kind: TokenKind, msg: []const u8) void {
-    if (self.parser.current.?.kind == kind) {
+    if (self.parser.current.kind == kind) {
         self.advance();
         return;
     }
@@ -124,15 +155,19 @@ fn consume(self: *Self, kind: TokenKind, msg: []const u8) void {
     self.errorAtCurrent(msg);
 }
 
+inline fn setCompiler(self: *Self, compiler: *Compiler) void {
+    self.current = compiler;
+}
+
 // FIXME: Handle errors
 inline fn emitByte(self: *Self, op: OpCode) void {
-    self.compilingChunk.?.write(op, self.parser.previous.?.line) catch {};
+    self.compilingChunk.?.write(op, self.parser.previous.line) catch {};
 }
 
 // FIXME: Handle errors
 fn emitBytes(self: *Self, op1: OpCode, op2: OpCode) void {
-    self.compilingChunk.?.write(op1, self.parser.previous.?.line) catch {};
-    self.compilingChunk.?.write(op2, self.parser.previous.?.line) catch {};
+    self.compilingChunk.?.write(op1, self.parser.previous.line) catch {};
+    self.compilingChunk.?.write(op2, self.parser.previous.line) catch {};
 }
 
 inline fn emitReturn(self: *Self) void {
@@ -149,8 +184,24 @@ inline fn end(self: *Self) void {
     }
 }
 
+inline fn beginScope(self: *Self) void {
+    self.current.scopeDepth += 1;
+}
+
+fn endScope(self: *Self) void {
+    self.current.scopeDepth -= 1;
+
+    const compiler = self.current;
+    while (compiler.count > 0 and
+        compiler.locals[@intCast(usize, compiler.count) - 1].depth > compiler.scopeDepth)
+    {
+        self.emitByte(.Pop);
+        compiler.count -= 1;
+    }
+}
+
 fn binary(self: *Self) void {
-    const operatorKind = self.parser.previous.?.kind;
+    const operatorKind = self.parser.previous.kind;
     self.parsePrecendence(getPrecedence(operatorKind).next());
 
     switch (operatorKind) {
@@ -170,7 +221,7 @@ fn binary(self: *Self) void {
 }
 
 fn literal(self: *Self) void {
-    switch (self.parser.previous.?.kind) {
+    switch (self.parser.previous.kind) {
         .False => self.emitByte(.False),
         .True => self.emitByte(.True),
         .Nil => self.emitByte(.Nil),
@@ -184,7 +235,7 @@ fn groupedExpression(self: *Self) void {
 }
 
 fn stringValue(self: *Self) Value {
-    const source = self.parser.previous.?.lexeme[1 .. self.parser.previous.?.lexeme.len - 1];
+    const source = self.parser.previous.lexeme[1 .. self.parser.previous.lexeme.len - 1];
     return Value.fromObject(
         &Object.ObjectString.copy(self.vm, source).object,
     );
@@ -194,16 +245,44 @@ inline fn string(self: *Self) void {
     self.emitConstant(self.stringValue());
 }
 
+fn namedVariable(self: *Self, name: *Token, canAssign: bool) void {
+    var setop: OpCode = undefined;
+    var getop: OpCode = undefined;
+
+    var arg = self.resolveLocal(name);
+
+    if (arg != -1) {
+        getop = .GetLocal;
+        setop = .SetLocal;
+    } else {
+        arg = self.identifierConstant(name);
+        getop = .GetGlobal;
+        setop = .SetGlobal;
+    }
+
+    const op = @intToEnum(OpCode, arg);
+    if (canAssign and self.match(.Equal)) {
+        self.expression();
+        self.emitBytes(setop, op);
+    } else {
+        self.emitBytes(getop, op);
+    }
+}
+
+inline fn variable(self: *Self, canAssign: bool) void {
+    self.namedVariable(&self.parser.previous, canAssign);
+}
+
 fn number(self: *Self) void {
     // TODO: Handle error properly
-    const float = (std.fmt.parseFloat(f32, self.parser.previous.?.lexeme) catch {
-        std.debug.panic("Could not parse as f32 '{s}'", .{self.parser.previous.?.lexeme});
+    const float = (std.fmt.parseFloat(f32, self.parser.previous.lexeme) catch {
+        std.debug.panic("Could not parse as f32 '{s}'", .{self.parser.previous.lexeme});
     });
     self.emitConstant(Value.fromF32(float));
 }
 
 fn unary(self: *Self) void {
-    const operatorKind = self.parser.previous.?.kind;
+    const operatorKind = self.parser.previous.kind;
     // Compile operand
     self.parsePrecendence(.Unary);
 
@@ -216,15 +295,21 @@ fn unary(self: *Self) void {
 
 fn parsePrecendence(self: *Self, precedence: Precedence) void {
     self.advance();
-    self.prefix(self.parser.previous.?.kind);
 
-    while (@enumToInt(precedence) <= @enumToInt(getPrecedence(self.parser.current.?.kind))) {
+    const canAssign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
+    self.prefix(self.parser.previous.kind, canAssign);
+
+    while (@enumToInt(precedence) <= @enumToInt(getPrecedence(self.parser.current.kind))) {
         self.advance();
-        self.infix(self.parser.previous.?.kind);
+        self.infix(self.parser.previous.kind, canAssign);
+    }
+
+    if (canAssign and self.match(.Equal)) {
+        self.@"error"("Invalid assignment target.");
     }
 }
 
-fn prefix(self: *Self, kind: TokenKind) void {
+fn prefix(self: *Self, kind: TokenKind, canAssign: bool) void {
     switch (kind) {
         .LeftParen => self.groupedExpression(),
         .Bang, .Minus => self.unary(),
@@ -234,12 +319,15 @@ fn prefix(self: *Self, kind: TokenKind) void {
         .String => self.string(),
         .Number => self.number(),
 
+        .Identifier => self.variable(canAssign),
+
         // Should error instead
         else => unreachable,
     }
 }
 
-fn infix(self: *Self, kind: TokenKind) void {
+fn infix(self: *Self, kind: TokenKind, canAssign: bool) void {
+    _ = canAssign;
     switch (kind) {
         .Plus, .Minus, .Star, .Slash => self.binary(),
 
@@ -265,12 +353,12 @@ fn makeConstant(self: *Self, value: Value) u8 {
     return constant;
 }
 
-fn errorAtCurrent(self: *Self, msg: []const u8) void {
-    self.errorAt(&self.parser.current.?, msg);
+inline fn errorAtCurrent(self: *Self, msg: []const u8) void {
+    self.errorAt(&self.parser.current, msg);
 }
 
-fn @"error"(self: *Self, msg: []const u8) void {
-    self.errorAt(&self.parser.previous.?, msg);
+inline fn @"error"(self: *Self, msg: []const u8) void {
+    self.errorAt(&self.parser.previous, msg);
 }
 
 fn errorAt(self: *Self, token: *Token, msg: []const u8) void {
@@ -295,14 +383,14 @@ fn advance(self: *Self) void {
     self.parser.previous = self.parser.current;
 
     while (true) {
-        self.parser.current = self.scanner.?.getToken();
-        if (self.parser.current.?.kind != .Error) break;
-        self.errorAtCurrent(self.parser.current.?.lexeme);
+        self.parser.current = self.scanner.getToken();
+        if (self.parser.current.kind != .Error) break;
+        self.errorAtCurrent(self.parser.current.lexeme);
     }
 }
 
 inline fn check(self: *Self, kind: TokenKind) bool {
-    return self.parser.current.?.kind == kind;
+    return self.parser.current.kind == kind;
 }
 
 fn match(self: *Self, kind: TokenKind) bool {
@@ -311,8 +399,101 @@ fn match(self: *Self, kind: TokenKind) bool {
     return true;
 }
 
-fn expression(self: *Self) void {
+inline fn identifierConstant(self: *Self, token: *Token) u8 {
+    return self.makeConstant(Value.fromObject(&Object.ObjectString.copy(self.vm, token.lexeme).object));
+}
+
+fn identifiersEqual(a: *Token, b: *Token) bool {
+    if (a.lexeme.len != b.lexeme.len) return false;
+    return std.mem.eql(u8, a.lexeme, b.lexeme);
+}
+
+fn resolveLocal(self: *Self, name: *Token) i32 {
+    var i: usize = @intCast(usize, self.current.count) - 1;
+    while (i >= 0) : (i += 1) {
+        var local = self.current.locals[i];
+        if (identifiersEqual(name, &local.name)) {
+            if (local.depth == -1) {
+                self.@"error"("Cannot read local variable in its own initialiser.");
+            }
+            return @intCast(i32, i);
+        }
+    }
+    return -1;
+}
+
+fn addLocal(self: *Self, name: *Token) void {
+    if (self.current.count == std.math.maxInt(u8)) {
+        self.@"error"("Too many variables in function.");
+        return;
+    }
+
+    const local = &self.current.locals[@intCast(usize, self.current.count)];
+    self.current.count += 1;
+
+    local.name = name.*;
+    local.depth = -1;
+}
+
+fn declareVariable(self: *Self) void {
+    if (self.current.scopeDepth == 0) return;
+
+    const name = &self.parser.previous;
+
+    if (self.current.count > 0) {
+        var i: usize = @intCast(usize, self.current.count) - 1;
+        while (i >= 0) : (i -= 1) {
+            const local = &self.current.locals[i];
+            if (local.depth != -1 and local.depth < self.current.scopeDepth) {
+                break;
+            }
+
+            if (identifiersEqual(name, &local.name)) {
+                self.@"error"("Already a variable with this name in this scope.");
+            }
+        }
+    }
+
+    self.addLocal(name);
+}
+
+fn parseVariable(self: *Self, msg: []const u8) u8 {
+    self.consume(.Identifier, msg);
+
+    self.declareVariable();
+    if (self.current.scopeDepth > 0) return 0;
+
+    return self.identifierConstant(&self.parser.previous);
+}
+
+inline fn markInitialised(self: *Self) void {
+    self.current.locals[@intCast(usize, self.current.count) - 1].depth = self.current.scopeDepth;
+}
+
+fn defineVariable(self: *Self, global: u8) void {
+    if (self.current.scopeDepth > 0) {
+        self.markInitialised();
+        return;
+    }
+
+    self.emitBytes(.DefineGlobal, @intToEnum(OpCode, global));
+}
+
+inline fn expression(self: *Self) void {
     self.parsePrecendence(.Assignment);
+}
+
+fn block(self: *Self) void {
+    while (!self.check(.RightBrace) and !self.check(.Eof)) {
+        self.declaration();
+    }
+    self.consume(.RightBrace, "Expect '}' after block.");
+}
+
+fn expressionStatement(self: *Self) void {
+    self.expression();
+    self.consume(.Semicolon, "Expect ';' after expression.");
+    self.emitByte(.Pop);
 }
 
 fn printStatement(self: *Self) void {
@@ -322,11 +503,54 @@ fn printStatement(self: *Self) void {
 }
 
 inline fn declaration(self: *Self) void {
-    self.statement();
+    if (self.match(.Var)) {
+        self.varDeclaration();
+    } else {
+        self.statement();
+    }
+
+    if (self.parser.panicMode) self.sync();
+}
+
+fn varDeclaration(self: *Self) void {
+    const global = self.parseVariable("Expect a variable name.");
+
+    if (self.match(.Equal)) {
+        self.expression();
+    } else {
+        self.emitByte(.Nil);
+    }
+    self.consume(.Semicolon, "Expect ';' after variable declaration.");
+
+    self.defineVariable(global);
 }
 
 fn statement(self: *Self) void {
-    if (self.match(.Print)) {
-        self.printStatement();
+    switch (self.parser.current.kind) {
+        .Print => {
+            self.advance();
+            self.printStatement();
+        },
+        .LeftBrace => {
+            self.advance();
+
+            self.beginScope();
+            self.block();
+            self.endScope();
+        },
+        else => self.expressionStatement(),
+    }
+}
+
+fn sync(self: *Self) void {
+    self.parser.panicMode = false;
+
+    while (!self.check(.Eof)) {
+        if (self.parser.previous.kind == .Semicolon) return;
+
+        switch (self.parser.current.kind) {
+            .Class, .Fun, .Var, .For, .If, .While, .Print, .Return => return,
+            else => self.advance(),
+        }
     }
 }
