@@ -121,12 +121,8 @@ fn run(self: *Self) InterpretResult {
     while (true) {
         const instruction = self.readByte();
         switch (@intToEnum(OpCode, instruction)) {
-            .Return => {
-                var c = self.pop();
-                c.print();
-                print("\n", .{});
-                return InterpretResult.ok;
-            },
+            .Return => return InterpretResult.ok,
+
             .Constant => self.push(self.readConstant()),
             .True => self.push(Value.fromBool(true)),
             .False => self.push(Value.fromBool(false)),
@@ -143,7 +139,9 @@ fn run(self: *Self) InterpretResult {
 
                 if (lhs.isObject() and rhs.isObject()) {
                     self.concatenate(lhs.asObject(), rhs.asObject());
-                } else if (lhs.isNumber() and rhs.isNumber()) {} else {
+                } else if (lhs.isNumber() and rhs.isNumber()) {
+                    self.push(Value.fromF32(lhs.asNumber() + rhs.asNumber()));
+                } else {
                     self.runtimeError("Operands must be two numbers or two strings.");
                     return .runtimeError;
                 }
@@ -166,6 +164,12 @@ fn run(self: *Self) InterpretResult {
                     .number => |n| self.push(Value.fromF32(-n)),
                     else => unreachable,
                 }
+            },
+
+            .Print => {
+                var value = self.pop();
+                value.print();
+                std.debug.print("\n", .{});
             },
 
             else => unreachable,

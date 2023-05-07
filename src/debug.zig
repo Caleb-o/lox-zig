@@ -5,7 +5,7 @@ const chunkm = @import("Chunk.zig");
 const OpCode = chunkm.OpCode;
 const value = @import("value.zig");
 
-pub const PRINT_CODE = false;
+pub const PRINT_CODE = true;
 pub const TRACE_EXECUTION = false;
 
 pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
@@ -47,6 +47,7 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
 
         .Not => simpleInstruction("OP_NOT", offset),
         .Negate => simpleInstruction("OP_NEGATE", offset),
+        .Print => simpleInstruction("OP_PRINT", offset),
         .Return => simpleInstruction("OP_RETURN", offset),
 
         else => unreachable,

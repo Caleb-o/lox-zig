@@ -59,7 +59,7 @@ pub const Value = union(enum) {
     }
 
     pub fn asNumber(self: Self) f32 {
-        std.debug.assert(self.isNumber()());
+        std.debug.assert(self.isNumber());
         return self.number;
     }
 

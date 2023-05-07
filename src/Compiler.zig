@@ -74,8 +74,11 @@ pub fn compile(self: *Self, chunk: *Chunk, source: []const u8) bool {
     self.scanner = Scanner.init(source);
 
     self.advance();
-    self.expression();
-    self.consume(.Eof, "Expect end of expression.");
+
+    while (!self.match(.Eof)) {
+        self.declaration();
+    }
+
     self.end();
 
     return !self.parser.hadError;
@@ -298,6 +301,32 @@ fn advance(self: *Self) void {
     }
 }
 
+inline fn check(self: *Self, kind: TokenKind) bool {
+    return self.parser.current.?.kind == kind;
+}
+
+fn match(self: *Self, kind: TokenKind) bool {
+    if (!self.check(kind)) return false;
+    self.advance();
+    return true;
+}
+
 fn expression(self: *Self) void {
     self.parsePrecendence(.Assignment);
+}
+
+fn printStatement(self: *Self) void {
+    self.expression();
+    self.consume(.Semicolon, "Expect ';' after value.");
+    self.emitByte(.Print);
+}
+
+inline fn declaration(self: *Self) void {
+    self.statement();
+}
+
+fn statement(self: *Self) void {
+    if (self.match(.Print)) {
+        self.printStatement();
+    }
 }
