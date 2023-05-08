@@ -20,12 +20,25 @@ pub const InterpretResult = enum(u8) {
     runtimeError,
 };
 
+const CallFrame = struct {
+    function: *Object.ObjectFunction,
+    ip: usize,
+    slotStart: usize,
+
+    pub fn create(function: *Object.ObjectFunction, slotStart: usize) CallFrame {
+        return .{
+            .function = function,
+            .ip = 0,
+            .slotStart = slotStart,
+        };
+    }
+};
+
 // Fields
 allocator: Allocator,
 errAlloc: Allocator,
-chunk: ?*Chunk,
-ip: usize,
 stack: ArrayList(Value),
+frames: ArrayList(CallFrame),
 globals: Table,
 strings: Table,
 objects: ?*Object,
@@ -36,9 +49,8 @@ pub fn init(allocator: Allocator, errAlloc: Allocator) !Self {
     return .{
         .allocator = allocator,
         .errAlloc = errAlloc,
-        .chunk = null,
-        .ip = 0,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
+        .frames = try ArrayList(CallFrame).initCapacity(allocator, 8),
         .globals = Table.init(allocator),
         .strings = Table.init(allocator),
         .objects = null,
@@ -49,44 +61,80 @@ pub fn deinit(self: *Self) void {
     self.stack.deinit();
     self.globals.deinit();
     self.strings.deinit();
+    self.frames.deinit();
     self.freeObjects();
     self.objects = null;
 }
 
 pub fn setup_and_go(self: *Self, source: []const u8) InterpretResult {
-    var chunk = Chunk.init(self.allocator);
-    defer chunk.deinit();
-
     var compiler = Compiler.create(self);
-    if (!compiler.compile(&chunk, source)) {
-        return .compilerError;
+
+    // self.defineNative("clock", nativeClock);
+
+    if (compiler.compile(source)) |func| {
+        _ = self.call(func, 0);
+        return self.run();
     }
 
-    self.chunk = &chunk;
-    self.ip = 0;
+    return .compilerError;
+}
 
-    return self.run();
+// Native
+fn nativeClock(argCount: u8, args: []Value) Value {
+    _ = args;
+    _ = argCount;
+    return Value.fromF32(@as(f32, std.time.timestamp()));
+}
+
+inline fn pushFrame(self: *Self, frame: CallFrame) void {
+    // TODO: Handle Errors
+    self.frames.append(frame) catch unreachable;
 }
 
 inline fn resetStack(self: *Self) void {
     self.stack.clearAndFree();
 }
 
+// fn defineNative(self: *Self, name: []const u8, function: Object.NativeFn) void {
+//     self.push(Value.fromObject(Object.ObjectString.copy(self, name)));
+//     self.push(Value.fromObject(Object.ObjectNativeFn.create(self, function)));
+
+//     self.globals.set(self.stack.items[0], self.stack.items[1]);
+//     self.pop();
+//     self.pop();
+// }
+
 fn runtimeError(self: *Self, msg: []const u8) void {
-    const line = self.chunk.?.findOpcodeLine(self.ip);
+    const frame = self.currentFrame();
+    const line = frame.function.chunk.findOpcodeLine(frame.ip);
     std.debug.print("Error: {s} [line {d}]\n", .{ msg, line });
+
+    var idx: isize = @intCast(isize, self.frames.items.len) - 1;
+    while (idx >= 0) : (idx -= 1) {
+        const stackFrame = &self.frames.items[@intCast(usize, idx)];
+        const function = stackFrame.function;
+        const funcLine = function.chunk.findOpcodeLine(stackFrame.ip - 1);
+
+        std.debug.print("[line {d}] in ", .{funcLine});
+        if (function.identifier) |identifier| {
+            std.debug.print("{s}()\n", .{identifier.chars});
+        } else {
+            std.debug.print("script\n", .{});
+        }
+    }
+
+    self.resetStack();
 }
 
 fn runtimeErrorAlloc(self: *Self, comptime fmt: []const u8, args: anytype) void {
-    const line = self.chunk.?.findOpcodeLine(self.ip);
     // TODO: Handle Errors
     const msg = std.fmt.allocPrint(self.errAlloc, fmt, args) catch unreachable;
-    std.debug.print("Error: {s} [line {d}]\n", .{ msg, line });
+    self.runtimeError(msg);
 }
 
 inline fn peek(self: *Self, distance: i32) Value {
     const stack = self.stack.items;
-    return stack[stack.len - 1 - distance];
+    return stack[stack.len - 1 - @intCast(usize, distance)];
 }
 
 inline fn push(self: *Self, value: Value) void {
@@ -95,6 +143,47 @@ inline fn push(self: *Self, value: Value) void {
 
 inline fn pop(self: *Self) Value {
     return self.stack.pop();
+}
+
+fn call(self: *Self, func: *Object.ObjectFunction, argCount: u8) bool {
+    if (func.arity != argCount) {
+        self.runtimeErrorAlloc(
+            "Function '{s}' expected {d} arguments, but received {d}.",
+            .{ func.identifier.?.chars, func.arity, argCount },
+        );
+        return false;
+    }
+
+    self.pushFrame(CallFrame.create(
+        func,
+        self.stack.items.len - @intCast(usize, argCount),
+    ));
+    return true;
+}
+
+fn callValue(self: *Self, callee: Value, argCount: u8) bool {
+    if (callee.isObject()) {
+        switch (callee.asObject().kind) {
+            .function => return self.call(callee.asObject().asFunction(), argCount),
+            // .nativeFunction => {
+            //     const native = callee.asObject().asNativeFunction();
+            //     const args = self.stack.items[self.stack.items.len - @intCast(usize, argCount) ..];
+
+            //     const result = native.function(argCount, args);
+
+            //     for (0..argCount) |_| {
+            //         _ = self.stack.pop();
+            //     }
+
+            //     self.push(result);
+            //     return true;
+            // },
+            else => {},
+        }
+    }
+
+    self.runtimeError("Can only call functions and classes.");
+    return false;
 }
 
 fn concatenate(self: *Self, lhs: *Object, rhs: *Object) void {
@@ -118,7 +207,9 @@ fn concatenate(self: *Self, lhs: *Object, rhs: *Object) void {
 
                 self.push(Value.fromObject(&Object.ObjectString.create(self, buffer).object));
             },
+            else => unreachable,
         },
+        .function => unreachable,
     }
 }
 
@@ -131,25 +222,29 @@ fn freeObjects(self: *Self) void {
     }
 }
 
+inline fn currentFrame(self: *Self) *CallFrame {
+    return &self.frames.items[self.frames.items.len - 1];
+}
+
 fn run(self: *Self) InterpretResult {
+    var frame = self.currentFrame();
+
     while (true) {
         const instruction = self.readByte();
         switch (@intToEnum(OpCode, instruction)) {
-            .Return => return InterpretResult.ok,
-
             .Loop => {
                 const offset = self.readShort();
-                self.ip -= @intCast(usize, offset);
+                frame.ip -= @intCast(usize, offset);
             },
 
             .Jump => {
                 const offset = self.readShort();
-                self.ip += @intCast(usize, offset);
+                frame.ip += @intCast(usize, offset);
             },
 
             .JumpIfFalse => {
                 const offset = self.readShort();
-                self.ip += @intCast(usize, @boolToInt(self.peek(0).isFalsey())) * offset;
+                frame.ip += @intCast(usize, @boolToInt(self.peek(0).isFalsey())) * offset;
             },
 
             .Constant => self.push(self.readConstant()),
@@ -166,12 +261,12 @@ fn run(self: *Self) InterpretResult {
 
             .GetLocal => {
                 const slot = self.readByte();
-                self.push(self.stack.items[slot]);
+                self.push(self.stack.items[frame.slotStart + slot]);
             },
 
             .SetLocal => {
                 const slot = self.readByte();
-                self.stack.items[slot] = self.peek(0);
+                self.stack.items[frame.slotStart + slot] = self.peek(0);
             },
 
             .GetGlobal => {
@@ -233,10 +328,31 @@ fn run(self: *Self) InterpretResult {
                 }
             },
 
+            .Call => {
+                const argCount = self.readByte();
+                if (!self.callValue(self.peek(argCount), argCount)) {
+                    return .runtimeError;
+                }
+                // Update frame pointer
+                frame = self.currentFrame();
+            },
+
             .Print => {
                 var value = self.pop();
                 value.print();
                 std.debug.print("\n", .{});
+            },
+
+            .Return => {
+                const result = self.pop();
+                _ = self.frames.pop();
+                if (self.frames.items.len == 0) {
+                    _ = self.pop();
+                    return .ok;
+                }
+
+                self.push(result);
+                frame = self.currentFrame();
             },
 
             else => unreachable,
@@ -263,20 +379,24 @@ fn binaryOp(self: *Self, comptime op: u8) void {
 }
 
 inline fn readByte(self: *Self) u8 {
-    defer self.ip += 1;
-    return self.chunk.?.code.items[self.ip];
+    const frame = self.currentFrame();
+    defer frame.ip += 1;
+    return frame.function.chunk.code.items[frame.ip];
 }
 
 inline fn readShort(self: *Self) u16 {
-    defer self.ip += 2;
-    const code = self.chunk.?.code;
+    const frame = self.currentFrame();
+    const code = frame.function.chunk.code;
+    defer frame.ip += 2;
+
     // NOTE: Bitshifts on unsigned values is UB, so we must cast so a signed type
-    const left = @intCast(u8, @intCast(i16, code.items[self.ip]) << 8);
-    return @intCast(u16, (left | code.items[self.ip + 1]));
+    const left = @intCast(u8, @intCast(i16, code.items[frame.ip]) << 8);
+    return @intCast(u16, (left | code.items[frame.ip + 1]));
 }
 
 inline fn readConstant(self: *Self) Value {
-    return self.chunk.?.constant_pool.values.items[self.readByte()];
+    const frame = self.currentFrame();
+    return frame.function.chunk.constant_pool.values.items[self.readByte()];
 }
 
 inline fn readString(self: *Self) *Object.ObjectString {

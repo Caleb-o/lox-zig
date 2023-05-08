@@ -117,6 +117,11 @@ pub const Value = union(enum) {
     pub fn printObject(object: *Object) void {
         switch (object.kind) {
             .string => std.debug.print("{s}", .{object.asString().chars}),
+            .function => {
+                const identifier = object.asFunction().identifier;
+                std.debug.print("<fn {s}>", .{if (identifier == null) "<script>" else identifier.?.chars});
+            },
+            // .nativeFunction => std.debug.print("<native fn>", .{}),
         }
     }
 };

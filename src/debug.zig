@@ -1,14 +1,14 @@
 const std = @import("std");
 const print = std.debug.print;
 
-const chunkm = @import("Chunk.zig");
-const OpCode = chunkm.OpCode;
+const Chunk = @import("Chunk.zig").Chunk;
+const OpCode = Chunk.OpCode;
 const value = @import("value.zig");
 
 pub const PRINT_CODE = false;
 pub const TRACE_EXECUTION = false;
 
-pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
+pub fn disassembleChunk(chunk: *Chunk, name: []const u8) void {
     print("=== {s} :: {d} ===\n", .{ name, chunk.code.items.len });
 
     var offset: u32 = 0;
@@ -17,7 +17,7 @@ pub fn disassembleChunk(chunk: *chunkm.Chunk, name: []const u8) void {
     }
 }
 
-fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
+fn disassembleInstruction(chunk: *Chunk, offset: u32) u32 {
     print("{d:0>4} ", .{offset});
 
     const line_here = chunk.findOpcodeLine(offset);
@@ -62,13 +62,14 @@ fn disassembleInstruction(chunk: *chunkm.Chunk, offset: u32) u32 {
         .Jump => jumpInstruction("OP_JUMP", 1, chunk, offset),
         .JumpIfFalse => jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
 
+        .Call => byteInstruction("OP_CALL", chunk, offset),
         .Return => simpleInstruction("OP_RETURN", offset),
 
         else => unreachable,
     };
 }
 
-fn constantInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
+fn constantInstruction(comptime name: []const u8, chunk: *Chunk, offset: u32) u32 {
     const constant = chunk.code.items[offset + 1];
     print("{s:<16} {d:>4} '", .{ name, constant });
     chunk.constant_pool.values.items[constant].print();
@@ -82,13 +83,13 @@ fn simpleInstruction(comptime name: []const u8, offset: u32) u32 {
     return offset + 1;
 }
 
-fn byteInstruction(comptime name: []const u8, chunk: *chunkm.Chunk, offset: u32) u32 {
+fn byteInstruction(comptime name: []const u8, chunk: *Chunk, offset: u32) u32 {
     const slot = chunk.code.items[offset + 1];
     std.debug.print("{s:<16} {d:4}\n", .{ name, slot });
     return offset + 2;
 }
 
-fn jumpInstruction(comptime name: []const u8, sign: i32, chunk: *chunkm.Chunk, offset: u32) u32 {
+fn jumpInstruction(comptime name: []const u8, sign: i32, chunk: *Chunk, offset: u32) u32 {
     const jump = (@intCast(i16, chunk.code.items[offset + 1]) << 8) | @intCast(i16, chunk.code.items[offset + 2]);
     std.debug.print("{s:<16} {d:4} -> {d}\n", .{
         name,

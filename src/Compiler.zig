@@ -41,19 +41,46 @@ const Local = struct {
             .depth = 0,
         };
     }
+
+    pub fn artificial(identifier: []const u8) Local {
+        return .{
+            .name = Token{
+                .kind = .String,
+                .lexeme = identifier,
+                .line = 0,
+            },
+            .depth = 0,
+        };
+    }
+};
+
+const FunctionKind = enum {
+    script,
+    function,
 };
 
 pub const Compiler = struct {
+    enclosing: ?*Compiler,
+    function: *Object.ObjectFunction,
+    functionKind: FunctionKind,
     locals: [std.math.maxInt(u8) + 1]Local,
     count: i32,
     scopeDepth: i32,
 
-    pub fn create() Compiler {
-        return .{
+    pub fn create(vm: *VM, functionKind: FunctionKind, enclosing: ?*Compiler) Compiler {
+        var compiler = .{
+            .enclosing = enclosing,
+            .function = Object.ObjectFunction.create(vm),
+            .functionKind = functionKind,
             .locals = [_]Local{Local.create()} ** (std.math.maxInt(u8) + 1),
-            .count = 0,
+            .count = 1,
             .scopeDepth = 0,
         };
+
+        const local = &compiler.locals[0];
+        local.* = Local.artificial("");
+
+        return compiler;
     }
 };
 
@@ -78,7 +105,6 @@ const Precedence = enum {
 pub const Self = @This();
 
 // Fields
-compilingChunk: ?*Chunk,
 current: *Compiler,
 scanner: Scanner,
 parser: Parser,
@@ -86,7 +112,6 @@ vm: *VM,
 
 pub fn create(vm: *VM) Self {
     return .{
-        .compilingChunk = null,
         .scanner = undefined,
         .current = undefined,
         .parser = Parser.create(),
@@ -94,14 +119,13 @@ pub fn create(vm: *VM) Self {
     };
 }
 
-pub fn compile(self: *Self, chunk: *Chunk, source: []const u8) bool {
+pub fn compile(self: *Self, source: []const u8) ?*Object.ObjectFunction {
     self.parser.hadError = false;
     self.parser.panicMode = false;
 
-    self.compilingChunk = chunk;
     self.scanner = Scanner.init(source);
 
-    var compiler = Compiler.create();
+    var compiler = Compiler.create(self.vm, .script, null);
     self.setCompiler(&compiler);
 
     self.advance();
@@ -110,9 +134,15 @@ pub fn compile(self: *Self, chunk: *Chunk, source: []const u8) bool {
         self.declaration();
     }
 
-    self.end();
+    if (!self.parser.hadError) {
+        return self.end();
+    }
 
-    return !self.parser.hadError;
+    return null;
+}
+
+inline fn currentChunk(self: *Self) *Chunk {
+    return &self.current.function.chunk;
 }
 
 fn getPrecedence(tokenType: TokenKind) Precedence {
@@ -142,10 +172,6 @@ fn getPrecedence(tokenType: TokenKind) Precedence {
     };
 }
 
-inline fn currentChunk(self: *Self) *Chunk {
-    return self.compilingChunk;
-}
-
 fn consume(self: *Self, kind: TokenKind, msg: []const u8) void {
     if (self.parser.current.kind == kind) {
         self.advance();
@@ -157,53 +183,72 @@ fn consume(self: *Self, kind: TokenKind, msg: []const u8) void {
 
 inline fn setCompiler(self: *Self, compiler: *Compiler) void {
     self.current = compiler;
+
+    if (self.current.functionKind != .script) {
+        self.current.function.identifier =
+            Object.ObjectString.copy(self.vm, self.parser.previous.lexeme);
+    }
 }
 
 // FIXME: Handle errors
 inline fn emitByte(self: *Self, op: OpCode) void {
-    self.compilingChunk.?.write(op, self.parser.previous.line) catch {};
+    self.currentChunk().write(op, self.parser.previous.line) catch unreachable;
 }
 
 inline fn emitByteU8(self: *Self, op: u8) void {
-    self.compilingChunk.?.writeByte(op, self.parser.previous.line) catch {};
+    self.currentChunk().writeByte(op, self.parser.previous.line) catch unreachable;
 }
 
 // FIXME: Handle errors
 fn emitBytes(self: *Self, op1: OpCode, op2: OpCode) void {
-    self.compilingChunk.?.write(op1, self.parser.previous.line) catch {};
-    self.compilingChunk.?.write(op2, self.parser.previous.line) catch {};
+    self.currentChunk().write(op1, self.parser.previous.line) catch unreachable;
+    self.currentChunk().write(op2, self.parser.previous.line) catch unreachable;
+}
+
+fn emitBytesU8(self: *Self, op1: OpCode, op2: u8) void {
+    self.currentChunk().write(op1, self.parser.previous.line) catch unreachable;
+    self.currentChunk().writeByte(op2, self.parser.previous.line) catch unreachable;
 }
 
 fn emitJump(self: *Self, op: OpCode) i32 {
     self.emitByte(op);
     self.emitByteU8(0xff);
     self.emitByteU8(0xff);
-    return @intCast(i32, self.compilingChunk.?.code.items.len - 2);
+    return @intCast(i32, self.currentChunk().code.items.len - 2);
 }
 
 fn patchJump(self: *Self, offset: i32) void {
-    const jump = @intCast(usize, @intCast(i32, self.compilingChunk.?.code.items.len) - offset - 2);
+    const jump = @intCast(usize, @intCast(i32, self.currentChunk().code.items.len) - offset - 2);
 
     if (jump > std.math.maxInt(u16)) {
         self.@"error"("Too much code to jump over.");
     }
 
-    self.compilingChunk.?.code.items[@intCast(usize, offset)] = @intCast(u8, (jump >> 8) & 0xff);
-    self.compilingChunk.?.code.items[@intCast(usize, offset) + 1] = @intCast(u8, jump & 0xff);
+    self.currentChunk().code.items[@intCast(usize, offset)] = @intCast(u8, (jump >> 8) & 0xff);
+    self.currentChunk().code.items[@intCast(usize, offset) + 1] = @intCast(u8, jump & 0xff);
 }
 
 inline fn emitReturn(self: *Self) void {
-    self.emitByte(.Return);
+    self.emitBytes(.Nil, .Return);
 }
 
-inline fn end(self: *Self) void {
+inline fn end(self: *Self) *Object.ObjectFunction {
     self.emitReturn();
+    const func = self.current.function;
 
     if (debug.PRINT_CODE) {
         if (!self.parser.hadError) {
-            debug.disassembleChunk(self.compilingChunk.?, "Code");
+            debug.disassembleChunk(self.currentChunk(), if (func.identifier != undefined)
+                std.fmt.allocPrint(self.vm.errAlloc, "{s}", .{func.identifier.chars})
+            else
+                "<script>");
         }
     }
+
+    if (self.current.enclosing) |enclosing| {
+        self.current = enclosing;
+    }
+    return func;
 }
 
 inline fn beginScope(self: *Self) void {
@@ -240,6 +285,30 @@ fn binary(self: *Self) void {
         .LessEqual => self.emitBytes(.Less, .Not),
         else => unreachable,
     }
+}
+
+fn argumentList(self: *Self) u8 {
+    var argCount: u8 = 0;
+
+    if (!self.check(.RightParen)) {
+        while (true) {
+            if (argCount == 255) {
+                self.@"error"("Can't have more than 255 arguments in function call.");
+            }
+
+            self.expression();
+            argCount += 1;
+
+            if (!self.match(.Comma)) break;
+        }
+    }
+    self.consume(.RightParen, "Expect ')' after arguments.");
+    return argCount;
+}
+
+inline fn call(self: *Self) void {
+    const argCount = self.argumentList();
+    self.emitBytesU8(.Call, argCount);
 }
 
 fn literal(self: *Self) void {
@@ -352,6 +421,7 @@ fn infix(self: *Self, kind: TokenKind, canAssign: bool) void {
     _ = canAssign;
     switch (kind) {
         .Plus, .Minus, .Star, .Slash => self.binary(),
+        .LeftParen => self.call(),
 
         .BangEqual, .EqualEqual => self.binary(),
         .Greater, .GreaterEqual => self.binary(),
@@ -370,7 +440,7 @@ inline fn emitConstant(self: *Self, value: Value) void {
 
 fn makeConstant(self: *Self, value: Value) u8 {
     // TODO: Handle error
-    var constant = self.compilingChunk.?.addConstant(value) catch {
+    var constant = self.currentChunk().addConstant(value) catch {
         self.@"error"("Too many constants in one chunk.");
         return 0;
     };
@@ -437,7 +507,7 @@ fn resolveLocal(self: *Self, name: *Token) i32 {
     if (self.current.count == 0) return -1;
 
     var i: usize = @intCast(usize, self.current.count) - 1;
-    while (i >= 0) : (i += 1) {
+    while (i > 0) : (i -= 1) {
         var local = self.current.locals[i];
         if (identifiersEqual(name, &local.name)) {
             if (local.depth == -1) {
@@ -494,6 +564,9 @@ fn parseVariable(self: *Self, msg: []const u8) u8 {
 }
 
 inline fn markInitialised(self: *Self) void {
+    if (self.current.scopeDepth == 0) {
+        return;
+    }
     self.current.locals[@intCast(usize, self.current.count) - 1].depth = self.current.scopeDepth;
 }
 
@@ -530,7 +603,9 @@ fn printStatement(self: *Self) void {
 }
 
 inline fn declaration(self: *Self) void {
-    if (self.match(.Var)) {
+    if (self.match(.Fun)) {
+        self.funDeclaration();
+    } else if (self.match(.Var)) {
         self.varDeclaration();
     } else {
         self.statement();
@@ -542,7 +617,7 @@ inline fn declaration(self: *Self) void {
 fn emitLoop(self: *Self, loopStart: usize) void {
     self.emitByte(.Loop);
 
-    const offset = self.compilingChunk.?.code.items.len - loopStart + 2;
+    const offset = self.currentChunk().code.items.len - loopStart + 2;
     if (offset > std.math.maxInt(u16)) {
         self.@"error"("Loop body is too large to jump.");
     }
@@ -569,6 +644,43 @@ fn @"or"(self: *Self) void {
 
     self.parsePrecendence(.Or);
     self.patchJump(endJump);
+}
+
+fn function(self: *Self, kind: FunctionKind) void {
+    var compiler = Compiler.create(self.vm, kind, self.current);
+    self.setCompiler(&compiler);
+
+    self.beginScope();
+
+    self.consume(.LeftParen, "Expect '(' after function name.");
+    if (!self.check(.RightParen)) {
+        while (true) {
+            if (self.current.function.arity == 255) {
+                self.errorAtCurrent("Can't have more than 255 parameters.");
+            }
+            self.current.function.arity += 1;
+
+            const constant = self.parseVariable("Expect parameter name.");
+            self.defineVariable(constant);
+
+            if (!self.match(.Comma)) break;
+        }
+    }
+    self.consume(.RightParen, "Expect ')' after parameter list.");
+
+    self.consume(.LeftBrace, "Expect '{' before function body.");
+    self.block();
+
+    const func = self.end();
+    self.emitByte(.Constant);
+    self.emitByteU8(self.makeConstant(Value.fromObject(&func.object)));
+}
+
+fn funDeclaration(self: *Self) void {
+    const global = self.parseVariable("Expect function name.");
+    self.markInitialised();
+    self.function(.function);
+    self.defineVariable(global);
 }
 
 fn varDeclaration(self: *Self) void {
@@ -604,8 +716,23 @@ fn ifStatement(self: *Self) void {
     self.patchJump(elseJump);
 }
 
+fn returnStatement(self: *Self) void {
+    if (self.current.functionKind == .script) {
+        self.@"error"("Can't return from top-level code.");
+    }
+
+    if (self.match(.Semicolon)) {
+        self.emitReturn();
+        return;
+    }
+
+    self.expression();
+    self.consume(.Semicolon, "Expect ';' after return value.");
+    self.emitByte(.Return);
+}
+
 fn whileStatement(self: *Self) void {
-    const loopStart = self.compilingChunk.?.code.items.len;
+    const loopStart = self.currentChunk().code.items.len;
     self.consume(.LeftParen, "Expect '(' after 'while'.");
     self.expression();
     self.consume(.RightParen, "Expect ')' after condition.");
@@ -631,7 +758,7 @@ fn forStatement(self: *Self) void {
         self.expressionStatement();
     }
 
-    var loopStart = self.compilingChunk.?.code.items.len;
+    var loopStart = self.currentChunk().code.items.len;
     var exitJump: i32 = -1;
     if (!self.match(.Semicolon)) {
         self.expression();
@@ -643,7 +770,7 @@ fn forStatement(self: *Self) void {
 
     if (!self.match(.RightParen)) {
         const bodyJump = self.emitJump(.Jump);
-        const incrementStart = self.compilingChunk.?.code.items.len;
+        const incrementStart = self.currentChunk().code.items.len;
 
         self.expression();
         self.emitByte(.Pop);
@@ -674,6 +801,10 @@ fn statement(self: *Self) void {
         .If => {
             self.advance();
             self.ifStatement();
+        },
+        .Return => {
+            self.advance();
+            self.returnStatement();
         },
         .While => {
             self.advance();
