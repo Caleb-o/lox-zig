@@ -5,7 +5,7 @@ const Chunk = @import("Chunk.zig").Chunk;
 const OpCode = Chunk.OpCode;
 const value = @import("value.zig");
 
-pub const PRINT_CODE = false;
+pub const PRINT_CODE = true;
 pub const TRACE_EXECUTION = false;
 
 pub fn disassembleChunk(chunk: *Chunk, name: []const u8) void {
@@ -44,6 +44,8 @@ fn disassembleInstruction(chunk: *Chunk, offset: u32) u32 {
         .GetGlobal => constantInstruction("OP_GET_GLOBAL", chunk, offset),
         .DefineGlobal => constantInstruction("OP_DEFINE_GLOBAL", chunk, offset),
         .SetGlobal => constantInstruction("OP_SET_GLOBAL", chunk, offset),
+        .GetUpvalue => byteInstruction("OP_GET_UPVALUE", chunk, offset),
+        .SetUpvalue => byteInstruction("OP_SET_UPVALUE", chunk, offset),
 
         .Add => simpleInstruction("OP_ADD", offset),
         .Subtract => simpleInstruction("OP_SUBTRACT", offset),
@@ -62,6 +64,33 @@ fn disassembleInstruction(chunk: *Chunk, offset: u32) u32 {
         .Jump => jumpInstruction("OP_JUMP", 1, chunk, offset),
         .JumpIfFalse => jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
 
+        .Closure => {
+            var newOffset = offset + 1;
+            const constant = chunk.code.items[newOffset];
+            newOffset += 1;
+            std.debug.print("{s:<16} {d:0>4} ", .{ "OP_CLOSURE", constant });
+
+            var val = chunk.constant_pool.values.items[constant];
+            val.print();
+
+            std.debug.print("\n", .{});
+
+            const function = val.asObject().asFunction();
+
+            for (0..function.upvalueCount) |_| {
+                const isLocal = chunk.code.items[newOffset];
+                newOffset += 1;
+                const index = chunk.code.items[newOffset];
+                newOffset += 1;
+
+                std.debug.print(
+                    "{d:0>4}      |                     {s} {d}\n",
+                    .{ newOffset - 2, if (isLocal == 1) "local" else "upvalue", index },
+                );
+            }
+
+            return newOffset;
+        },
         .Call => byteInstruction("OP_CALL", chunk, offset),
         .Return => simpleInstruction("OP_RETURN", offset),
 

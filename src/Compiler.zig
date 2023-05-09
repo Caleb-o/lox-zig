@@ -54,6 +54,18 @@ const Local = struct {
     }
 };
 
+const UpValue = struct {
+    index: u8,
+    isLocal: bool,
+
+    pub fn create() UpValue {
+        return .{
+            .index = 0,
+            .isLocal = false,
+        };
+    }
+};
+
 const FunctionKind = enum {
     script,
     function,
@@ -64,7 +76,8 @@ pub const Compiler = struct {
     function: *Object.ObjectFunction,
     functionKind: FunctionKind,
     locals: [std.math.maxInt(u8) + 1]Local,
-    count: i32,
+    upvalues: [std.math.maxInt(u8) + 1]UpValue,
+    count: usize,
     scopeDepth: i32,
 
     pub fn create(vm: *VM, functionKind: FunctionKind, enclosing: ?*Compiler) Compiler {
@@ -73,6 +86,7 @@ pub const Compiler = struct {
             .function = Object.ObjectFunction.create(vm),
             .functionKind = functionKind,
             .locals = [_]Local{Local.create()} ** (std.math.maxInt(u8) + 1),
+            .upvalues = [_]UpValue{UpValue.create()} ** (std.math.maxInt(u8) + 1),
             .count = 1,
             .scopeDepth = 0,
         };
@@ -340,15 +354,21 @@ fn namedVariable(self: *Self, name: *Token, canAssign: bool) void {
     var setop: OpCode = undefined;
     var getop: OpCode = undefined;
 
-    var arg = self.resolveLocal(name);
+    var arg = self.resolveLocal(self.current, name);
 
     if (arg != -1) {
         getop = .GetLocal;
         setop = .SetLocal;
     } else {
-        arg = self.identifierConstant(name);
-        getop = .GetGlobal;
-        setop = .SetGlobal;
+        arg = self.resolveUpvalue(self.current, name);
+        if (arg != -1) {
+            getop = .GetUpvalue;
+            setop = .SetUpvalue;
+        } else {
+            arg = self.identifierConstant(name);
+            getop = .GetGlobal;
+            setop = .SetGlobal;
+        }
     }
 
     const op = @intToEnum(OpCode, arg);
@@ -503,12 +523,12 @@ fn identifiersEqual(a: *Token, b: *Token) bool {
     return std.mem.eql(u8, a.lexeme, b.lexeme);
 }
 
-fn resolveLocal(self: *Self, name: *Token) i32 {
-    if (self.current.count == 0) return -1;
+fn resolveLocal(self: *Self, compiler: *Compiler, name: *Token) i32 {
+    if (compiler.count == 0) return -1;
 
-    var i: usize = @intCast(usize, self.current.count) - 1;
-    while (i > 0) : (i -= 1) {
-        var local = self.current.locals[i];
+    var i: usize = 0;
+    while (i < compiler.count) : (i += 1) {
+        var local = compiler.locals[compiler.count - 1 - i];
         if (identifiersEqual(name, &local.name)) {
             if (local.depth == -1) {
                 self.@"error"("Cannot read local variable in its own initialiser.");
@@ -516,6 +536,45 @@ fn resolveLocal(self: *Self, name: *Token) i32 {
             return @intCast(i32, i);
         }
     }
+    return -1;
+}
+
+fn addUpvalue(self: *Self, compiler: *Compiler, index: u8, isLocal: bool) u32 {
+    const upvalueCount = compiler.function.upvalueCount;
+
+    for (0..upvalueCount) |idx| {
+        const upvalue = &compiler.upvalues[idx];
+        if (upvalue.index == index and upvalue.isLocal) {
+            return @intCast(u32, idx);
+        }
+    }
+
+    if (upvalueCount == 255) {
+        self.@"error"("Too many closure variables in function.");
+        return 0;
+    }
+
+    compiler.function.upvalueCount += 1;
+
+    compiler.upvalues[upvalueCount].isLocal = isLocal;
+    compiler.upvalues[upvalueCount].index = index;
+    return upvalueCount;
+}
+
+fn resolveUpvalue(self: *Self, compiler: *Compiler, name: *Token) i32 {
+    if (compiler.enclosing == null) return -1;
+
+    const local = self.resolveLocal(compiler.enclosing.?, name);
+    if (local != -1) {
+        return @intCast(i32, self.addUpvalue(compiler, @intCast(u8, local), true));
+    }
+
+    // Resolve existing upvalue
+    const upvalue = self.resolveUpvalue(compiler.enclosing.?, name);
+    if (upvalue != -1) {
+        return @intCast(i32, self.addUpvalue(compiler, @intCast(u8, upvalue), false));
+    }
+
     return -1;
 }
 
@@ -672,8 +731,13 @@ fn function(self: *Self, kind: FunctionKind) void {
     self.block();
 
     const func = self.end();
-    self.emitByte(.Constant);
+    self.emitByte(.Closure);
     self.emitByteU8(self.makeConstant(Value.fromObject(&func.object)));
+
+    for (0..func.upvalueCount) |idx| {
+        self.emitByteU8(if (compiler.upvalues[idx].isLocal) 1 else 0);
+        self.emitByteU8(compiler.upvalues[idx].index);
+    }
 }
 
 fn funDeclaration(self: *Self) void {

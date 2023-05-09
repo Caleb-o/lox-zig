@@ -10,6 +10,7 @@ pub const ObjectKind = enum {
     string,
     function,
     nativeFunction,
+    closure,
 };
 
 // Fields
@@ -35,6 +36,7 @@ pub fn destroy(self: *Self, vm: *VM) void {
         .string => self.asString().destroy(vm),
         .function => self.asFunction().destroy(vm),
         .nativeFunction => self.asNativeFunction().destroy(vm),
+        .closure => self.asClosure().destroy(vm),
     }
 }
 
@@ -89,6 +91,7 @@ pub const ObjectString = struct {
 pub const ObjectFunction = struct {
     object: Self,
     arity: u8,
+    upvalueCount: u32,
     chunk: Chunk,
     identifier: ?*ObjectString,
 
@@ -98,6 +101,7 @@ pub const ObjectFunction = struct {
         const object = Self.allocate(vm, Function, .function);
         const func = object.asFunction();
         func.arity = 0;
+        func.upvalueCount = 0;
         func.identifier = null;
         func.chunk = Chunk.init(vm.allocator);
 
@@ -132,6 +136,25 @@ pub const ObjectNativeFn = struct {
     }
 };
 
+pub const ObjectClosure = struct {
+    object: Self,
+    function: *ObjectFunction,
+
+    const Closure = @This();
+
+    pub fn create(vm: *VM, function: *ObjectFunction) *Closure {
+        const object = Self.allocate(vm, Closure, .closure);
+        const func = object.asClosure();
+        func.function = function;
+
+        return func;
+    }
+
+    pub fn destroy(self: *Closure, vm: *VM) void {
+        vm.allocator.destroy(self);
+    }
+};
+
 // Check
 pub inline fn isString(self: *Self) bool {
     return self.kind == .string;
@@ -143,6 +166,10 @@ pub inline fn isFunction(self: *Self) bool {
 
 pub inline fn isNativeFunction(self: *Self) bool {
     return self.kind == .nativeFunction;
+}
+
+pub inline fn isClosure(self: *Self) bool {
+    return self.kind == .closure;
 }
 
 // "Cast"
@@ -159,4 +186,9 @@ pub fn asFunction(self: *Self) *ObjectFunction {
 pub fn asNativeFunction(self: *Self) *ObjectNativeFn {
     std.debug.assert(self.isNativeFunction());
     return @fieldParentPtr(ObjectNativeFn, "object", self);
+}
+
+pub fn asClosure(self: *Self) *ObjectClosure {
+    std.debug.assert(self.isClosure());
+    return @fieldParentPtr(ObjectClosure, "object", self);
 }

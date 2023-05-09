@@ -19,6 +19,8 @@ pub const OpCode = enum(u8) {
     GetGlobal,
     DefineGlobal,
     SetGlobal,
+    GetUpvalue,
+    SetUpvalue,
 
     Pop,
     Equal,
@@ -33,6 +35,7 @@ pub const OpCode = enum(u8) {
     Negate,
     Print,
 
+    Closure,
     Call,
     Loop,
     Jump,

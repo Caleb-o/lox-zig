@@ -21,13 +21,13 @@ pub const InterpretResult = enum(u8) {
 };
 
 const CallFrame = struct {
-    function: *Object.ObjectFunction,
+    closure: *Object.ObjectClosure,
     ip: usize,
     slotStart: usize,
 
-    pub fn create(function: *Object.ObjectFunction, slotStart: usize) CallFrame {
+    pub fn create(closure: *Object.ObjectClosure, slotStart: usize) CallFrame {
         return .{
-            .function = function,
+            .closure = closure,
             .ip = 0,
             .slotStart = slotStart,
         };
@@ -73,7 +73,11 @@ pub fn setup_and_go(self: *Self, source: []const u8) InterpretResult {
 
     if (compiler.compile(source)) |func| {
         self.push(Value.fromObject(&func.object));
-        _ = self.call(func, 0);
+        const closure = Object.ObjectClosure.create(self, func);
+        _ = self.pop();
+        self.push(Value.fromObject(&closure.object));
+
+        _ = self.call(closure, 0);
         const result = self.run();
         _ = self.pop();
         return result;
@@ -108,13 +112,13 @@ fn defineNative(self: *Self, name: []const u8, function: Object.NativeFn) void {
 
 fn runtimeError(self: *Self, msg: []const u8) void {
     const frame = self.currentFrame();
-    const line = frame.function.chunk.findOpcodeLine(frame.ip);
+    const line = frame.closure.function.chunk.findOpcodeLine(frame.ip);
     std.debug.print("Error: {s} [line {d}]\n", .{ msg, line });
 
     var idx: isize = @intCast(isize, self.frames.items.len) - 1;
     while (idx >= 0) : (idx -= 1) {
         const stackFrame = &self.frames.items[@intCast(usize, idx)];
-        const function = stackFrame.function;
+        const function = stackFrame.closure.function;
         const funcLine = function.chunk.findOpcodeLine(stackFrame.ip - 1);
 
         std.debug.print("[line {d}] in ", .{funcLine});
@@ -142,30 +146,30 @@ inline fn peek(self: *Self, distance: i32) Value {
 inline fn push(self: *Self, value: Value) void {
     self.stack.append(value) catch unreachable;
 
-    // std.debug.print("\nStack: ", .{});
-    // for (self.stack.items) |*item| {
-    //     item.print();
-    //     std.debug.print(" ", .{});
-    // }
-    // std.debug.print("\n", .{});
+    std.debug.print("\nStack: ", .{});
+    for (self.stack.items) |*item| {
+        item.print();
+        std.debug.print(" ", .{});
+    }
+    std.debug.print("\n", .{});
 }
 
 inline fn pop(self: *Self) Value {
     return self.stack.pop();
 }
 
-fn call(self: *Self, func: *Object.ObjectFunction, argCount: usize) bool {
-    if (func.arity != argCount) {
+fn call(self: *Self, closure: *Object.ObjectClosure, argCount: usize) bool {
+    if (closure.function.arity != argCount) {
         self.runtimeErrorAlloc(
             "Function '{s}' expected {d} arguments, but received {d}.",
-            .{ func.identifier.?.chars, func.arity, argCount },
+            .{ closure.function.identifier.?.chars, closure.function.arity, argCount },
         );
         return false;
     }
 
     std.debug.assert(self.stack.items.len >= 1);
     self.pushFrame(CallFrame.create(
-        func,
+        closure,
         self.stack.items.len - 1 - argCount,
     ));
     return true;
@@ -174,7 +178,7 @@ fn call(self: *Self, func: *Object.ObjectFunction, argCount: usize) bool {
 fn callValue(self: *Self, callee: Value, argCount: usize) bool {
     if (callee.isObject()) {
         switch (callee.asObject().kind) {
-            .function => return self.call(callee.asObject().asFunction(), argCount),
+            .closure => return self.call(callee.asObject().asClosure(), argCount),
             .nativeFunction => {
                 const native = callee.asObject().asNativeFunction();
                 const args = self.stack.items[self.stack.items.len - 1 - argCount ..];
@@ -237,24 +241,22 @@ inline fn currentFrame(self: *Self) *CallFrame {
 }
 
 fn run(self: *Self) InterpretResult {
-    var frame = self.currentFrame();
-
     while (true) {
         const instruction = self.readByte();
         switch (@intToEnum(OpCode, instruction)) {
             .Loop => {
                 const offset = self.readShort();
-                frame.ip -= @intCast(usize, offset);
+                self.currentFrame().ip -= @intCast(usize, offset);
             },
 
             .Jump => {
                 const offset = self.readShort();
-                frame.ip += @intCast(usize, offset);
+                self.currentFrame().ip += @intCast(usize, offset);
             },
 
             .JumpIfFalse => {
                 const offset = self.readShort();
-                frame.ip += @intCast(usize, @boolToInt(self.peek(0).isFalsey())) * offset;
+                self.currentFrame().ip += @intCast(usize, @boolToInt(self.peek(0).isFalsey())) * offset;
             },
 
             .Constant => self.push(self.readConstant()),
@@ -271,12 +273,12 @@ fn run(self: *Self) InterpretResult {
 
             .GetLocal => {
                 const slot = self.readByte();
-                self.push(self.stack.items[frame.slotStart + slot]);
+                self.push(self.stack.items[self.currentFrame().slotStart + slot]);
             },
 
             .SetLocal => {
                 const slot = self.readByte();
-                self.stack.items[frame.slotStart + slot] = self.peek(0);
+                self.stack.items[self.currentFrame().slotStart + slot] = self.peek(0);
             },
 
             .GetGlobal => {
@@ -342,13 +344,17 @@ fn run(self: *Self) InterpretResult {
                 }
             },
 
+            .Closure => {
+                const function = self.readConstant().asObject().asFunction();
+                const closure = Object.ObjectClosure.create(self, function);
+                self.push(Value.fromObject(&closure.object));
+            },
+
             .Call => {
                 const argCount = self.readByte();
                 if (!self.callValue(self.peek(argCount), argCount)) {
                     return .runtimeError;
                 }
-                // Update frame pointer
-                frame = self.currentFrame();
             },
 
             .Print => {
@@ -368,7 +374,6 @@ fn run(self: *Self) InterpretResult {
                 const diff = self.stack.items.len - oldFrame.slotStart;
                 self.stack.resize(self.stack.items.len - diff) catch unreachable;
 
-                frame = self.currentFrame();
                 self.push(result);
             },
 
@@ -398,12 +403,12 @@ fn binaryOp(self: *Self, comptime op: u8) void {
 inline fn readByte(self: *Self) u8 {
     const frame = self.currentFrame();
     defer frame.ip += 1;
-    return frame.function.chunk.code.items[frame.ip];
+    return frame.closure.function.chunk.code.items[frame.ip];
 }
 
 inline fn readShort(self: *Self) u16 {
     const frame = self.currentFrame();
-    const code = frame.function.chunk.code;
+    const code = frame.closure.function.chunk.code;
     defer frame.ip += 2;
 
     // NOTE: Bitshifts on unsigned values is UB, so we must cast so a signed type
@@ -413,7 +418,7 @@ inline fn readShort(self: *Self) u16 {
 
 inline fn readConstant(self: *Self) Value {
     const frame = self.currentFrame();
-    return frame.function.chunk.constant_pool.values.items[self.readByte()];
+    return frame.closure.function.chunk.constant_pool.values.items[self.readByte()];
 }
 
 inline fn readString(self: *Self) *Object.ObjectString {

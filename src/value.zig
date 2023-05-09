@@ -122,6 +122,7 @@ pub const Value = union(enum) {
                 std.debug.print("<fn {s}>", .{if (identifier == null) "<script>" else identifier.?.chars});
             },
             .nativeFunction => std.debug.print("<native fn>", .{}),
+            .closure => std.debug.print("<closure {s}>", .{if (object.asClosure().function.identifier) |identifier| identifier.chars else "script"}),
         }
     }
 };
