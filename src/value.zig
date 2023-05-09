@@ -121,7 +121,7 @@ pub const Value = union(enum) {
                 const identifier = object.asFunction().identifier;
                 std.debug.print("<fn {s}>", .{if (identifier == null) "<script>" else identifier.?.chars});
             },
-            // .nativeFunction => std.debug.print("<native fn>", .{}),
+            .nativeFunction => std.debug.print("<native fn>", .{}),
         }
     }
 };

@@ -69,21 +69,23 @@ pub fn deinit(self: *Self) void {
 pub fn setup_and_go(self: *Self, source: []const u8) InterpretResult {
     var compiler = Compiler.create(self);
 
-    // self.defineNative("clock", nativeClock);
+    self.defineNative("clock", nativeClock);
 
     if (compiler.compile(source)) |func| {
+        self.push(Value.fromObject(&func.object));
         _ = self.call(func, 0);
-        return self.run();
+        const result = self.run();
+        _ = self.pop();
+        return result;
     }
 
     return .compilerError;
 }
 
 // Native
-fn nativeClock(argCount: u8, args: []Value) Value {
+fn nativeClock(args: []Value) Value {
     _ = args;
-    _ = argCount;
-    return Value.fromF32(@as(f32, std.time.timestamp()));
+    return Value.fromF32(@intToFloat(f32, std.time.milliTimestamp()));
 }
 
 inline fn pushFrame(self: *Self, frame: CallFrame) void {
@@ -95,14 +97,14 @@ inline fn resetStack(self: *Self) void {
     self.stack.clearAndFree();
 }
 
-// fn defineNative(self: *Self, name: []const u8, function: Object.NativeFn) void {
-//     self.push(Value.fromObject(Object.ObjectString.copy(self, name)));
-//     self.push(Value.fromObject(Object.ObjectNativeFn.create(self, function)));
+fn defineNative(self: *Self, name: []const u8, function: Object.NativeFn) void {
+    self.push(Value.fromObject(&Object.ObjectString.copy(self, name).object));
+    self.push(Value.fromObject(&Object.ObjectNativeFn.create(self, function).object));
 
-//     self.globals.set(self.stack.items[0], self.stack.items[1]);
-//     self.pop();
-//     self.pop();
-// }
+    _ = self.globals.set(self.stack.items[0].asObject().asString(), self.stack.items[1]);
+    _ = self.pop();
+    _ = self.pop();
+}
 
 fn runtimeError(self: *Self, msg: []const u8) void {
     const frame = self.currentFrame();
@@ -138,14 +140,21 @@ inline fn peek(self: *Self, distance: i32) Value {
 }
 
 inline fn push(self: *Self, value: Value) void {
-    self.stack.append(value) catch {};
+    self.stack.append(value) catch unreachable;
+
+    // std.debug.print("\nStack: ", .{});
+    // for (self.stack.items) |*item| {
+    //     item.print();
+    //     std.debug.print(" ", .{});
+    // }
+    // std.debug.print("\n", .{});
 }
 
 inline fn pop(self: *Self) Value {
     return self.stack.pop();
 }
 
-fn call(self: *Self, func: *Object.ObjectFunction, argCount: u8) bool {
+fn call(self: *Self, func: *Object.ObjectFunction, argCount: usize) bool {
     if (func.arity != argCount) {
         self.runtimeErrorAlloc(
             "Function '{s}' expected {d} arguments, but received {d}.",
@@ -154,30 +163,31 @@ fn call(self: *Self, func: *Object.ObjectFunction, argCount: u8) bool {
         return false;
     }
 
+    std.debug.assert(self.stack.items.len >= 1);
     self.pushFrame(CallFrame.create(
         func,
-        self.stack.items.len - @intCast(usize, argCount),
+        self.stack.items.len - 1 - argCount,
     ));
     return true;
 }
 
-fn callValue(self: *Self, callee: Value, argCount: u8) bool {
+fn callValue(self: *Self, callee: Value, argCount: usize) bool {
     if (callee.isObject()) {
         switch (callee.asObject().kind) {
             .function => return self.call(callee.asObject().asFunction(), argCount),
-            // .nativeFunction => {
-            //     const native = callee.asObject().asNativeFunction();
-            //     const args = self.stack.items[self.stack.items.len - @intCast(usize, argCount) ..];
+            .nativeFunction => {
+                const native = callee.asObject().asNativeFunction();
+                const args = self.stack.items[self.stack.items.len - 1 - argCount ..];
 
-            //     const result = native.function(argCount, args);
+                const result = native.function(args);
 
-            //     for (0..argCount) |_| {
-            //         _ = self.stack.pop();
-            //     }
+                for (0..argCount) |_| {
+                    _ = self.pop();
+                }
 
-            //     self.push(result);
-            //     return true;
-            // },
+                self.push(result);
+                return true;
+            },
             else => {},
         }
     }
@@ -209,7 +219,7 @@ fn concatenate(self: *Self, lhs: *Object, rhs: *Object) void {
             },
             else => unreachable,
         },
-        .function => unreachable,
+        else => unreachable,
     }
 }
 
@@ -296,8 +306,8 @@ fn run(self: *Self) InterpretResult {
             },
 
             .Add => {
-                const rhs = self.pop();
-                const lhs = self.pop();
+                var rhs = self.pop();
+                var lhs = self.pop();
 
                 if (lhs.isObject() and rhs.isObject()) {
                     self.concatenate(lhs.asObject(), rhs.asObject());
@@ -305,6 +315,10 @@ fn run(self: *Self) InterpretResult {
                     self.push(Value.fromF32(lhs.asNumber() + rhs.asNumber()));
                 } else {
                     self.runtimeError("Operands must be two numbers or two strings.");
+                    lhs.print();
+                    std.debug.print(" ", .{});
+                    rhs.print();
+                    std.debug.print("\n", .{});
                     return .runtimeError;
                 }
             },
@@ -345,14 +359,17 @@ fn run(self: *Self) InterpretResult {
 
             .Return => {
                 const result = self.pop();
-                _ = self.frames.pop();
+                const oldFrame = self.frames.pop();
                 if (self.frames.items.len == 0) {
                     _ = self.pop();
                     return .ok;
                 }
 
-                self.push(result);
+                const diff = self.stack.items.len - oldFrame.slotStart;
+                self.stack.resize(self.stack.items.len - diff) catch unreachable;
+
                 frame = self.currentFrame();
+                self.push(result);
             },
 
             else => unreachable,

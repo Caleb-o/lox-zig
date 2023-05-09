@@ -238,8 +238,8 @@ inline fn end(self: *Self) *Object.ObjectFunction {
 
     if (debug.PRINT_CODE) {
         if (!self.parser.hadError) {
-            debug.disassembleChunk(self.currentChunk(), if (func.identifier != undefined)
-                std.fmt.allocPrint(self.vm.errAlloc, "{s}", .{func.identifier.chars})
+            debug.disassembleChunk(self.currentChunk(), if (func.identifier != null)
+                std.fmt.allocPrint(self.vm.errAlloc, "{s}", .{func.identifier.?.chars}) catch unreachable
             else
                 "<script>");
         }

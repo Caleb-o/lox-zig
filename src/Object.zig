@@ -9,7 +9,7 @@ const Self = @This();
 pub const ObjectKind = enum {
     string,
     function,
-    // nativeFunction,
+    nativeFunction,
 };
 
 // Fields
@@ -34,7 +34,7 @@ pub fn destroy(self: *Self, vm: *VM) void {
     switch (self.kind) {
         .string => self.asString().destroy(vm),
         .function => self.asFunction().destroy(vm),
-        // .nativeFunction => self.asNativeFunction().destroy(vm),
+        .nativeFunction => self.asNativeFunction().destroy(vm),
     }
 }
 
@@ -111,26 +111,26 @@ pub const ObjectFunction = struct {
     }
 };
 
-// pub const NativeFn = fn (argCount: u8, args: []Value) Value;
+pub const NativeFn = *const fn (args: []Value) Value;
 
-// pub const ObjectNativeFn = struct {
-//     object: Self,
-//     function: NativeFn,
+pub const ObjectNativeFn = struct {
+    object: Self,
+    function: NativeFn,
 
-//     const Native = @This();
+    const Native = @This();
 
-//     pub fn create(vm: *VM, function: NativeFn) Native {
-//         const object = Self.allocate(vm, Native, .function);
-//         const func = object.asNativeFunction();
-//         func.function = function;
+    pub fn create(vm: *VM, function: NativeFn) *Native {
+        const object = Self.allocate(vm, Native, .nativeFunction);
+        const func = object.asNativeFunction();
+        func.function = function;
 
-//         return func;
-//     }
+        return func;
+    }
 
-//     pub fn destroy(self: *Self, vm: *VM) void {
-//         vm.allocator.destroy(self);
-//     }
-// };
+    pub fn destroy(self: *Native, vm: *VM) void {
+        vm.allocator.destroy(self);
+    }
+};
 
 // Check
 pub inline fn isString(self: *Self) bool {
@@ -141,9 +141,9 @@ pub inline fn isFunction(self: *Self) bool {
     return self.kind == .function;
 }
 
-// pub inline fn isNativeFunction(self: *Self) bool {
-//     return self.kind == .nativeFunction;
-// }
+pub inline fn isNativeFunction(self: *Self) bool {
+    return self.kind == .nativeFunction;
+}
 
 // "Cast"
 pub fn asString(self: *Self) *ObjectString {
@@ -156,7 +156,7 @@ pub fn asFunction(self: *Self) *ObjectFunction {
     return @fieldParentPtr(ObjectFunction, "object", self);
 }
 
-// pub fn asNativeFunction(self: *Self) *ObjectNativeFn {
-//     std.debug.assert(self.isNativeFunction());
-//     return @fieldParentPtr(ObjectNativeFn, "object", self);
-// }
+pub fn asNativeFunction(self: *Self) *ObjectNativeFn {
+    std.debug.assert(self.isNativeFunction());
+    return @fieldParentPtr(ObjectNativeFn, "object", self);
+}
