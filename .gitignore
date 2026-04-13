@@ -13,4 +13,5 @@ zig-pkg/
 
 .vscode/
 
+tmp/
 # End of https://www.toptal.com/developers/gitignore/api/zig

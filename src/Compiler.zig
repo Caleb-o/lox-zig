@@ -75,8 +75,8 @@ pub const Compiler = struct {
     enclosing: ?*Compiler,
     function: *Object.ObjectFunction,
     functionKind: FunctionKind,
-    locals: [std.math.maxInt(u8) + 1]Local,
-    upvalues: [std.math.maxInt(u8) + 1]UpValue,
+    locals: [std.math.maxInt(u8)]Local,
+    upvalues: [std.math.maxInt(u8)]UpValue,
     count: usize,
     scopeDepth: i32,
 
@@ -85,14 +85,14 @@ pub const Compiler = struct {
             .enclosing = enclosing,
             .function = Object.ObjectFunction.create(vm),
             .functionKind = functionKind,
-            .locals = [_]Local{Local.create()} ** (std.math.maxInt(u8) + 1),
-            .upvalues = [_]UpValue{UpValue.create()} ** (std.math.maxInt(u8) + 1),
+            .locals = [_]Local{Local.create()} ** std.math.maxInt(u8),
+            .upvalues = [_]UpValue{UpValue.create()} ** std.math.maxInt(u8),
             .count = 1,
             .scopeDepth = 0,
         };
 
         const local = &compiler.locals[0];
-        local.* = Local.artificial("");
+        local.* = Local.artificial("init");
 
         return compiler;
     }
@@ -371,12 +371,12 @@ fn namedVariable(self: *Self, name: *Token, canAssign: bool) void {
         }
     }
 
-    const op: OpCode = @enumFromInt(arg);
+    const op: u8 = @intCast(arg);
     if (canAssign and self.match(.Equal)) {
         self.expression();
-        self.emitBytes(setop, op);
+        self.emitBytesU8(setop, op);
     } else {
-        self.emitBytes(getop, op);
+        self.emitBytesU8(getop, op);
     }
 }
 
@@ -533,7 +533,7 @@ fn resolveLocal(self: *Self, compiler: *Compiler, name: *Token) i32 {
             if (local.depth == -1) {
                 self.@"error"("Cannot read local variable in its own initialiser.");
             }
-            return @intCast(i);
+            return @intCast(i + 1);
         }
     }
     return -1;

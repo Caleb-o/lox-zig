@@ -147,13 +147,6 @@ inline fn peek(self: *Self, distance: i32) Value {
 
 inline fn push(self: *Self, value: Value) void {
     self.stack.append(self.allocator, value) catch unreachable;
-
-    std.debug.print("\nStack: ", .{});
-    for (self.stack.items) |*item| {
-        item.print();
-        std.debug.print(" ", .{});
-    }
-    std.debug.print("\n", .{});
 }
 
 inline fn pop(self: *Self) Value {
@@ -365,12 +358,12 @@ fn run(self: *Self) InterpretResult {
             },
 
             .Return => {
-                const result = self.pop();
                 const oldFrame = self.frames.pop().?;
                 if (self.frames.items.len == 0) {
-                    _ = self.pop();
                     return .ok;
                 }
+
+                const result = self.pop();
 
                 const diff = self.stack.items.len - oldFrame.slotStart;
                 self.stack.resize(self.allocator, self.stack.items.len - diff) catch unreachable;

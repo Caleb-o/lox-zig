@@ -12,15 +12,16 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    const errAlloc = arena.allocator();
-
     defer {
-        arena.deinit();
-
-        const status = gpa.deinit();
-        if (status == .leak) std.debug.panic("Internal Error: Memory leaked\n", .{});
+        if (gpa.deinit() == .leak) {
+            std.debug.panic("Internal Error: Memory leaked\n", .{});
+        }
     }
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const errAlloc = arena.allocator();
 
     if (args.len == 1) {
         try repl(init.io, allocator, errAlloc);
