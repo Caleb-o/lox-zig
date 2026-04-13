@@ -122,7 +122,7 @@ fn findEntry(self: *Self, key: *Object.ObjectString) *Entry {
 fn adjust(self: *Self) void {
     const capacity = if (self.entries.len < 8) 8 else self.entries.len << 1;
     // TODO: Handle Errors
-    var entries = self.allocator.alloc(Entry, capacity) catch unreachable;
+    const entries = self.allocator.alloc(Entry, capacity) catch unreachable;
 
     // Initialise null entries
     for (entries) |*entry| {

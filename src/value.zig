@@ -128,21 +128,23 @@ pub const Value = union(enum) {
 };
 
 pub const ValueArray = struct {
+    allocator: Allocator,
     values: ArrayList(Value),
 
     const Self = @This();
 
     pub fn init(allocator: Allocator) Self {
         return Self{
-            .values = ArrayList(Value).init(allocator),
+            .allocator = allocator,
+            .values = .empty,
         };
     }
 
     pub inline fn deinit(self: *Self) void {
-        self.values.deinit();
+        self.values.deinit(self.allocator);
     }
 
     pub inline fn write(self: *Self, value: Value) !void {
-        try self.values.append(value);
+        try self.values.append(self.allocator, value);
     }
 };

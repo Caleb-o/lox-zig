@@ -7,12 +7,12 @@ const OpCode = @import("Chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
 const VM = @import("VM.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    var gpa = std.heap.DebugAllocator(.{}){};
     const allocator = gpa.allocator();
-    const args = try std.process.argsAlloc(allocator);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
     const errAlloc = arena.allocator();
 
     defer {
@@ -21,44 +21,39 @@ pub fn main() !void {
         const status = gpa.deinit();
         if (status == .leak) std.debug.panic("Internal Error: Memory leaked\n", .{});
     }
-    defer std.process.argsFree(allocator, args);
 
     if (args.len == 1) {
-        try repl(allocator, errAlloc);
+        try repl(init.io, allocator, errAlloc);
     } else if (args.len == 2) {
-        try runFile(allocator, errAlloc, args[1]);
+        try runFile(init.io, allocator, errAlloc, args[1]);
     } else {
         std.debug.print("Usage: clox [path]\n", .{});
     }
 }
 
-fn nextLine(reader: anytype, buffer: []u8) !?[]const u8 {
-    var line = (try reader.readUntilDelimiterOrEof(
-        buffer,
+fn nextLine(reader: *std.Io.Reader) !?[]const u8 {
+    const line = (try reader.takeDelimiter(
         '\n',
     )) orelse return null;
     // trim annoying windows-only carriage return character
     if (@import("builtin").os.tag == .windows) {
-        return std.mem.trimRight(u8, line, "\r");
+        return std.mem.trimEnd(u8, line, "\r");
     } else {
         return line;
     }
 }
 
-fn repl(allocator: Allocator, errAlloc: Allocator) !void {
-    const stdout = std.io.getStdOut();
-    const stdin = std.io.getStdIn();
-
-    var vm = try VM.init(allocator, errAlloc);
+fn repl(io: std.Io, allocator: Allocator, errAlloc: Allocator) !void {
+    var vm = try VM.init(io, allocator, errAlloc);
     defer vm.deinit();
 
     while (true) {
-        try stdout.writeAll(
-            \\>
-        );
+        std.debug.print(">>", .{});
 
         var buffer: [1024]u8 = undefined;
-        const input = (try nextLine(stdin.reader(), &buffer)).?;
+        var stdin = std.Io.File.Reader.init(.stdin(), io, &buffer);
+
+        const input = (try nextLine(&stdin.interface)).?;
         if (input.len == 0) {
             return;
         }
@@ -66,21 +61,18 @@ fn repl(allocator: Allocator, errAlloc: Allocator) !void {
     }
 }
 
-fn readFile(allocator: Allocator, path: [:0]u8) ![]u8 {
-    const file = try std.fs.cwd().openFile(
+fn readFile(io: std.Io, allocator: Allocator, path: [:0]const u8) ![]u8 {
+    return try std.Io.Dir.cwd().readFileAlloc(
+        io,
         path,
-        .{},
+        allocator,
+        .unlimited,
     );
-    defer file.close();
-
-    const size = (try file.stat()).size;
-    const contents = try file.reader().readAllAlloc(allocator, size);
-    return contents;
 }
 
-fn runFile(allocator: Allocator, errAlloc: Allocator, path: [:0]u8) !void {
-    const source = try readFile(allocator, path);
-    var vm = try VM.init(allocator, errAlloc);
+fn runFile(io: std.Io, allocator: Allocator, errAlloc: Allocator, path: [:0]const u8) !void {
+    const source = try readFile(io, allocator, path);
+    var vm = try VM.init(io, allocator, errAlloc);
 
     defer {
         allocator.free(source);

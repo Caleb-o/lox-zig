@@ -35,6 +35,7 @@ const CallFrame = struct {
 };
 
 // Fields
+io: std.Io,
 allocator: Allocator,
 errAlloc: Allocator,
 stack: ArrayList(Value),
@@ -45,8 +46,9 @@ objects: ?*Object,
 
 // Methods
 
-pub fn init(allocator: Allocator, errAlloc: Allocator) !Self {
+pub fn init(io: std.Io, allocator: Allocator, errAlloc: Allocator) !Self {
     return .{
+        .io = io,
         .allocator = allocator,
         .errAlloc = errAlloc,
         .stack = try ArrayList(Value).initCapacity(allocator, 256),
@@ -58,10 +60,10 @@ pub fn init(allocator: Allocator, errAlloc: Allocator) !Self {
 }
 
 pub fn deinit(self: *Self) void {
-    self.stack.deinit();
+    self.stack.deinit(self.allocator);
     self.globals.deinit();
     self.strings.deinit();
-    self.frames.deinit();
+    self.frames.deinit(self.allocator);
     self.freeObjects();
     self.objects = null;
 }
@@ -87,18 +89,18 @@ pub fn setup_and_go(self: *Self, source: []const u8) InterpretResult {
 }
 
 // Native
-fn nativeClock(args: []Value) Value {
-    _ = args;
-    return Value.fromF32(@intToFloat(f32, std.time.milliTimestamp()));
+fn nativeClock(self: *Self, _: []Value) Value {
+    const now = std.Io.Timestamp.now(self.io, .real);
+    return Value.fromF32(@floatFromInt(now.toMilliseconds()));
 }
 
 inline fn pushFrame(self: *Self, frame: CallFrame) void {
     // TODO: Handle Errors
-    self.frames.append(frame) catch unreachable;
+    self.frames.append(self.allocator, frame) catch unreachable;
 }
 
 inline fn resetStack(self: *Self) void {
-    self.stack.clearAndFree();
+    self.stack.clearAndFree(self.allocator);
 }
 
 fn defineNative(self: *Self, name: []const u8, function: Object.NativeFn) void {
@@ -115,9 +117,9 @@ fn runtimeError(self: *Self, msg: []const u8) void {
     const line = frame.closure.function.chunk.findOpcodeLine(frame.ip);
     std.debug.print("Error: {s} [line {d}]\n", .{ msg, line });
 
-    var idx: isize = @intCast(isize, self.frames.items.len) - 1;
+    var idx: isize = @as(isize, @intCast(self.frames.items.len)) - 1;
     while (idx >= 0) : (idx -= 1) {
-        const stackFrame = &self.frames.items[@intCast(usize, idx)];
+        const stackFrame = &self.frames.items[@intCast(idx)];
         const function = stackFrame.closure.function;
         const funcLine = function.chunk.findOpcodeLine(stackFrame.ip - 1);
 
@@ -140,11 +142,11 @@ fn runtimeErrorAlloc(self: *Self, comptime fmt: []const u8, args: anytype) void 
 
 inline fn peek(self: *Self, distance: i32) Value {
     const stack = self.stack.items;
-    return stack[stack.len - 1 - @intCast(usize, distance)];
+    return stack[stack.len - 1 - @as(usize, @intCast(distance))];
 }
 
 inline fn push(self: *Self, value: Value) void {
-    self.stack.append(value) catch unreachable;
+    self.stack.append(self.allocator, value) catch unreachable;
 
     std.debug.print("\nStack: ", .{});
     for (self.stack.items) |*item| {
@@ -155,7 +157,7 @@ inline fn push(self: *Self, value: Value) void {
 }
 
 inline fn pop(self: *Self) Value {
-    return self.stack.pop();
+    return self.stack.pop().?;
 }
 
 fn call(self: *Self, closure: *Object.ObjectClosure, argCount: usize) bool {
@@ -183,7 +185,7 @@ fn callValue(self: *Self, callee: Value, argCount: usize) bool {
                 const native = callee.asObject().asNativeFunction();
                 const args = self.stack.items[self.stack.items.len - 1 - argCount ..];
 
-                const result = native.function(args);
+                const result = native.function(self, args);
 
                 for (0..argCount) |_| {
                     _ = self.pop();
@@ -213,8 +215,8 @@ fn concatenate(self: *Self, lhs: *Object, rhs: *Object) void {
                 // TODO: Handle errors
                 const buffer = self.allocator.alloc(u8, lstr.chars.len + rstr.chars.len) catch unreachable;
 
-                std.mem.copy(u8, buffer[0..lstr.chars.len], lstr.chars);
-                std.mem.copy(u8, buffer[lstr.chars.len..], rstr.chars);
+                std.mem.copyForwards(u8, buffer[0..lstr.chars.len], lstr.chars);
+                std.mem.copyForwards(u8, buffer[lstr.chars.len..], rstr.chars);
 
                 _ = self.pop();
                 _ = self.pop();
@@ -243,20 +245,20 @@ inline fn currentFrame(self: *Self) *CallFrame {
 fn run(self: *Self) InterpretResult {
     while (true) {
         const instruction = self.readByte();
-        switch (@intToEnum(OpCode, instruction)) {
+        switch (@as(OpCode, @enumFromInt(instruction))) {
             .Loop => {
                 const offset = self.readShort();
-                self.currentFrame().ip -= @intCast(usize, offset);
+                self.currentFrame().ip -= @intCast(offset);
             },
 
             .Jump => {
                 const offset = self.readShort();
-                self.currentFrame().ip += @intCast(usize, offset);
+                self.currentFrame().ip += @intCast(offset);
             },
 
             .JumpIfFalse => {
                 const offset = self.readShort();
-                self.currentFrame().ip += @intCast(usize, @boolToInt(self.peek(0).isFalsey())) * offset;
+                self.currentFrame().ip += @as(usize, @intCast(@intFromBool(self.peek(0).isFalsey()))) * offset;
             },
 
             .Constant => self.push(self.readConstant()),
@@ -337,8 +339,7 @@ fn run(self: *Self) InterpretResult {
                     self.runtimeError("Operand must be a number.");
                     return .runtimeError;
                 }
-                var v = self.pop();
-                switch (v) {
+                switch (self.pop()) {
                     .number => |n| self.push(Value.fromF32(-n)),
                     else => unreachable,
                 }
@@ -365,14 +366,14 @@ fn run(self: *Self) InterpretResult {
 
             .Return => {
                 const result = self.pop();
-                const oldFrame = self.frames.pop();
+                const oldFrame = self.frames.pop().?;
                 if (self.frames.items.len == 0) {
                     _ = self.pop();
                     return .ok;
                 }
 
                 const diff = self.stack.items.len - oldFrame.slotStart;
-                self.stack.resize(self.stack.items.len - diff) catch unreachable;
+                self.stack.resize(self.allocator, self.stack.items.len - diff) catch unreachable;
 
                 self.push(result);
             },
@@ -385,8 +386,8 @@ fn run(self: *Self) InterpretResult {
 
 // Helper functions
 fn binaryOp(self: *Self, comptime op: u8) void {
-    var rhs = self.pop();
-    var lhs = self.pop();
+    const rhs = self.pop();
+    const lhs = self.pop();
 
     switch (op) {
         '+' => self.push(Value.fromF32(lhs.number + rhs.number)),
@@ -412,8 +413,8 @@ inline fn readShort(self: *Self) u16 {
     defer frame.ip += 2;
 
     // NOTE: Bitshifts on unsigned values is UB, so we must cast so a signed type
-    const left = @intCast(u8, @intCast(i16, code.items[frame.ip]) << 8);
-    return @intCast(u16, (left | code.items[frame.ip + 1]));
+    const left: u8 = @intCast(@as(i16, @intCast(code.items[frame.ip])) << 8);
+    return @intCast((left | code.items[frame.ip + 1]));
 }
 
 inline fn readConstant(self: *Self) Value {

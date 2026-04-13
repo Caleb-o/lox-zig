@@ -5,10 +5,10 @@ const eql = std.mem.eql;
 
 pub fn unsignedIntToBytes(int: u32) [4]u8 {
     var arr = [_]u8{0} ** 4;
-    arr[0] = @intCast(u8, (int >> 24) & 0xFF);
-    arr[1] = @intCast(u8, (int >> 16) & 0xFF);
-    arr[2] = @intCast(u8, (int >> 8) & 0xFF);
-    arr[3] = @intCast(u8, int & 0xFF);
+    arr[0] = @intCast((int >> 24) & 0xFF);
+    arr[1] = @intCast((int >> 16) & 0xFF);
+    arr[2] = @intCast((int >> 8) & 0xFF);
+    arr[3] = @intCast(int & 0xFF);
 
     return arr;
 }
@@ -25,6 +25,6 @@ test "Int -> Bytes -> Int" {
     const value: u32 = 123_456;
     var bytes = unsignedIntToBytes(value);
     try expect(eql(u8, &bytes, &[4]u8{ 0, 1, 226, 64 }));
-    var int = bytesToUnsignedInt(bytes);
+    const int = bytesToUnsignedInt(bytes);
     try expect(int == value);
 }

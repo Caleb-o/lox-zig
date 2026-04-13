@@ -81,7 +81,7 @@ pub const Compiler = struct {
     scopeDepth: i32,
 
     pub fn create(vm: *VM, functionKind: FunctionKind, enclosing: ?*Compiler) Compiler {
-        var compiler = .{
+        var compiler = Compiler{
             .enclosing = enclosing,
             .function = Object.ObjectFunction.create(vm),
             .functionKind = functionKind,
@@ -112,7 +112,7 @@ const Precedence = enum {
     Primary,
 
     pub fn next(self: Precedence) Precedence {
-        return @intToEnum(Precedence, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };
 
@@ -228,18 +228,18 @@ fn emitJump(self: *Self, op: OpCode) i32 {
     self.emitByte(op);
     self.emitByteU8(0xff);
     self.emitByteU8(0xff);
-    return @intCast(i32, self.currentChunk().code.items.len - 2);
+    return @intCast(self.currentChunk().code.items.len - 2);
 }
 
 fn patchJump(self: *Self, offset: i32) void {
-    const jump = @intCast(usize, @intCast(i32, self.currentChunk().code.items.len) - offset - 2);
+    const jump: usize = @intCast(@as(i32, @intCast(self.currentChunk().code.items.len)) - offset - 2);
 
     if (jump > std.math.maxInt(u16)) {
         self.@"error"("Too much code to jump over.");
     }
 
-    self.currentChunk().code.items[@intCast(usize, offset)] = @intCast(u8, (jump >> 8) & 0xff);
-    self.currentChunk().code.items[@intCast(usize, offset) + 1] = @intCast(u8, jump & 0xff);
+    self.currentChunk().code.items[@intCast(offset)] = @intCast((jump >> 8) & 0xff);
+    self.currentChunk().code.items[@as(usize, @intCast(offset)) + 1] = @intCast(jump & 0xff);
 }
 
 inline fn emitReturn(self: *Self) void {
@@ -274,7 +274,7 @@ fn endScope(self: *Self) void {
 
     const compiler = self.current;
     while (compiler.count > 0 and
-        compiler.locals[@intCast(usize, compiler.count) - 1].depth > compiler.scopeDepth)
+        compiler.locals[@as(usize, @intCast(compiler.count)) - 1].depth > compiler.scopeDepth)
     {
         self.emitByte(.Pop);
         compiler.count -= 1;
@@ -371,7 +371,7 @@ fn namedVariable(self: *Self, name: *Token, canAssign: bool) void {
         }
     }
 
-    const op = @intToEnum(OpCode, arg);
+    const op: OpCode = @enumFromInt(arg);
     if (canAssign and self.match(.Equal)) {
         self.expression();
         self.emitBytes(setop, op);
@@ -407,10 +407,10 @@ fn unary(self: *Self) void {
 fn parsePrecendence(self: *Self, precedence: Precedence) void {
     self.advance();
 
-    const canAssign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
+    const canAssign = @intFromEnum(precedence) <= @intFromEnum(Precedence.Assignment);
     self.prefix(self.parser.previous.kind, canAssign);
 
-    while (@enumToInt(precedence) <= @enumToInt(getPrecedence(self.parser.current.kind))) {
+    while (@intFromEnum(precedence) <= @intFromEnum(getPrecedence(self.parser.current.kind))) {
         self.advance();
         self.infix(self.parser.previous.kind, canAssign);
     }
@@ -455,12 +455,12 @@ fn infix(self: *Self, kind: TokenKind, canAssign: bool) void {
 }
 
 inline fn emitConstant(self: *Self, value: Value) void {
-    self.emitBytes(.Constant, @intToEnum(OpCode, self.makeConstant(value)));
+    self.emitBytes(.Constant, @enumFromInt(self.makeConstant(value)));
 }
 
 fn makeConstant(self: *Self, value: Value) u8 {
     // TODO: Handle error
-    var constant = self.currentChunk().addConstant(value) catch {
+    const constant = self.currentChunk().addConstant(value) catch {
         self.@"error"("Too many constants in one chunk.");
         return 0;
     };
@@ -533,7 +533,7 @@ fn resolveLocal(self: *Self, compiler: *Compiler, name: *Token) i32 {
             if (local.depth == -1) {
                 self.@"error"("Cannot read local variable in its own initialiser.");
             }
-            return @intCast(i32, i);
+            return @intCast(i);
         }
     }
     return -1;
@@ -545,7 +545,7 @@ fn addUpvalue(self: *Self, compiler: *Compiler, index: u8, isLocal: bool) u32 {
     for (0..upvalueCount) |idx| {
         const upvalue = &compiler.upvalues[idx];
         if (upvalue.index == index and upvalue.isLocal) {
-            return @intCast(u32, idx);
+            return @intCast(idx);
         }
     }
 
@@ -566,13 +566,13 @@ fn resolveUpvalue(self: *Self, compiler: *Compiler, name: *Token) i32 {
 
     const local = self.resolveLocal(compiler.enclosing.?, name);
     if (local != -1) {
-        return @intCast(i32, self.addUpvalue(compiler, @intCast(u8, local), true));
+        return @intCast(self.addUpvalue(compiler, @intCast(local), true));
     }
 
     // Resolve existing upvalue
     const upvalue = self.resolveUpvalue(compiler.enclosing.?, name);
     if (upvalue != -1) {
-        return @intCast(i32, self.addUpvalue(compiler, @intCast(u8, upvalue), false));
+        return @intCast(self.addUpvalue(compiler, @intCast(upvalue), false));
     }
 
     return -1;
@@ -584,7 +584,7 @@ fn addLocal(self: *Self, name: *Token) void {
         return;
     }
 
-    const local = &self.current.locals[@intCast(usize, self.current.count)];
+    const local = &self.current.locals[@intCast(self.current.count)];
     self.current.count += 1;
 
     local.name = name.*;
@@ -597,7 +597,7 @@ fn declareVariable(self: *Self) void {
     const name = &self.parser.previous;
 
     if (self.current.count > 0) {
-        var i: usize = @intCast(usize, self.current.count) - 1;
+        var i: usize = @as(usize, @intCast(self.current.count)) - 1;
         while (i >= 0) : (i -= 1) {
             const local = &self.current.locals[i];
             if (local.depth != -1 and local.depth < self.current.scopeDepth) {
@@ -626,7 +626,7 @@ inline fn markInitialised(self: *Self) void {
     if (self.current.scopeDepth == 0) {
         return;
     }
-    self.current.locals[@intCast(usize, self.current.count) - 1].depth = self.current.scopeDepth;
+    self.current.locals[@as(usize, @intCast(self.current.count)) - 1].depth = self.current.scopeDepth;
 }
 
 fn defineVariable(self: *Self, global: u8) void {
@@ -635,7 +635,7 @@ fn defineVariable(self: *Self, global: u8) void {
         return;
     }
 
-    self.emitBytes(.DefineGlobal, @intToEnum(OpCode, global));
+    self.emitBytes(.DefineGlobal, @enumFromInt(global));
 }
 
 inline fn expression(self: *Self) void {
@@ -681,8 +681,8 @@ fn emitLoop(self: *Self, loopStart: usize) void {
         self.@"error"("Loop body is too large to jump.");
     }
 
-    self.emitByteU8(@intCast(u8, (offset >> 8) & 0xff));
-    self.emitByteU8(@intCast(u8, offset & 0xff));
+    self.emitByteU8(@intCast((offset >> 8) & 0xff));
+    self.emitByteU8(@intCast(offset & 0xff));
 }
 
 fn @"and"(self: *Self) void {

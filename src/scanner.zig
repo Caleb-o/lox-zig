@@ -78,7 +78,7 @@ pub const Scanner = struct {
             return self.makeToken(.Eof);
         }
 
-        var c = self.advance();
+        const c = self.advance();
 
         if (isAlpha(c)) return self.identifier();
         if (isDigit(c)) return self.number();

@@ -28,7 +28,7 @@ fn disassembleInstruction(chunk: *Chunk, offset: u32) u32 {
         print("{d:>4} ", .{line_here});
     }
 
-    const code = @intToEnum(OpCode, chunk.code.items[offset]);
+    const code: OpCode = @enumFromInt(chunk.code.items[offset]);
     return switch (code) {
         .Constant => constantInstruction("OP_CONSTANT", chunk, offset),
 
@@ -119,11 +119,11 @@ fn byteInstruction(comptime name: []const u8, chunk: *Chunk, offset: u32) u32 {
 }
 
 fn jumpInstruction(comptime name: []const u8, sign: i32, chunk: *Chunk, offset: u32) u32 {
-    const jump = (@intCast(i16, chunk.code.items[offset + 1]) << 8) | @intCast(i16, chunk.code.items[offset + 2]);
+    const jump = (@as(i16, @intCast(chunk.code.items[offset + 1])) << 8) | @as(i16, @intCast(chunk.code.items[offset + 2]));
     std.debug.print("{s:<16} {d:4} -> {d}\n", .{
         name,
         offset,
-        @intCast(i32, offset + 3) + sign * jump,
+        @as(i32, @intCast(offset + 3)) + sign * jump,
     });
     return offset + 3;
 }

@@ -69,7 +69,7 @@ pub const ObjectString = struct {
 
     pub fn copy(vm: *VM, source: []const u8) *String {
         const buffer = vm.allocator.alloc(u8, source.len) catch unreachable;
-        std.mem.copy(u8, buffer, source);
+        std.mem.copyForwards(u8, buffer, source);
         return String.create(vm, buffer);
     }
 
@@ -115,7 +115,7 @@ pub const ObjectFunction = struct {
     }
 };
 
-pub const NativeFn = *const fn (args: []Value) Value;
+pub const NativeFn = *const fn (vm: *VM, args: []Value) Value;
 
 pub const ObjectNativeFn = struct {
     object: Self,
@@ -175,20 +175,20 @@ pub inline fn isClosure(self: *Self) bool {
 // "Cast"
 pub fn asString(self: *Self) *ObjectString {
     std.debug.assert(self.isString());
-    return @fieldParentPtr(ObjectString, "object", self);
+    return @ptrCast(self);
 }
 
 pub fn asFunction(self: *Self) *ObjectFunction {
     std.debug.assert(self.isFunction());
-    return @fieldParentPtr(ObjectFunction, "object", self);
+    return @ptrCast(self);
 }
 
 pub fn asNativeFunction(self: *Self) *ObjectNativeFn {
     std.debug.assert(self.isNativeFunction());
-    return @fieldParentPtr(ObjectNativeFn, "object", self);
+    return @ptrCast(self);
 }
 
 pub fn asClosure(self: *Self) *ObjectClosure {
     std.debug.assert(self.isClosure());
-    return @fieldParentPtr(ObjectClosure, "object", self);
+    return @ptrCast(self);
 }
